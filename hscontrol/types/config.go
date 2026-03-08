@@ -1012,7 +1012,7 @@ func LoadServerConfig() (*Config, error) {
 		NoisePrivateKeyPath: util.AbsolutePathFromConfigPath(
 			viper.GetString("noise.private_key_path"),
 		),
-		BaseDomain: dnsConfig.BaseDomain,
+		BaseDomain:         dnsConfig.BaseDomain,
 		TailnetDisplayName: viper.GetString("tailnet_display_name"),
 
 		DERP: derpConfig,
