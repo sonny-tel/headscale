@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 	"tailscale.com/types/views"
 )
@@ -142,6 +143,35 @@ type Node struct {
 	DeletedAt *time.Time
 
 	IsOnline *bool `gorm:"-"`
+
+	// IsWireGuardOnly indicates that this is an external (non-Tailscale) WireGuard peer.
+	// It does not speak Disco or DERP, and must have Endpoints in order to be reachable.
+	// Its DiscoKey and MachineKey will be zero values.
+	IsWireGuardOnly bool `gorm:"column:is_wireguard_only;not null;default:false"`
+
+	// IsJailed indicates that this node is jailed: it cannot initiate connections
+	// into the tailnet, but other nodes can still connect to it.
+	IsJailed bool `gorm:"column:is_jailed;not null;default:false"`
+
+	// ExitNodeDNSResolvers is the list of DNS servers that should be used when this
+	// WireGuard-only node is used as an exit node.
+	ExitNodeDNSResolvers []*dnstype.Resolver `gorm:"column:exit_node_dns_resolvers;serializer:json"`
+
+	// OwnerNodeID is the ID of the headscale node that owns this external peer.
+	// Only set for WireGuard-only peers. The external peer is only visible in
+	// the owner's MapResponse. ON DELETE CASCADE removes external peers when the
+	// owner is deleted.
+	OwnerNodeID *NodeID `gorm:"column:owner_node_id"`
+
+	// Location fields for exit node picker UI grouping.
+	// Only relevant for WireGuard-only peers used as exit nodes.
+	LocationCountry     string  `gorm:"column:location_country"`
+	LocationCountryCode string  `gorm:"column:location_country_code"`
+	LocationCity        string  `gorm:"column:location_city"`
+	LocationCityCode    string  `gorm:"column:location_city_code"`
+	LocationLatitude    float64 `gorm:"column:location_latitude"`
+	LocationLongitude   float64 `gorm:"column:location_longitude"`
+	LocationPriority    int     `gorm:"column:location_priority;default:0"`
 }
 
 type Nodes []*Node
@@ -422,6 +452,29 @@ func (node *Node) Proto() *v1.Node {
 		nodeProto.Expiry = timestamppb.New(*node.Expiry)
 	}
 
+	nodeProto.IsWireguardOnly = node.IsWireGuardOnly
+	nodeProto.IsJailed = node.IsJailed
+
+	if node.OwnerNodeID != nil {
+		nodeProto.OwnerNodeId = node.OwnerNodeID.Uint64()
+	}
+
+	if loc := node.Location(); loc != nil {
+		nodeProto.LocationCountry = loc.Country
+		nodeProto.LocationCountryCode = loc.CountryCode
+		nodeProto.LocationCity = loc.City
+		nodeProto.LocationCityCode = loc.CityCode
+		nodeProto.LocationLatitude = loc.Latitude
+		nodeProto.LocationLongitude = loc.Longitude
+		nodeProto.LocationPriority = int32(loc.Priority)
+	}
+
+	endpoints := make([]string, 0, len(node.Endpoints))
+	for _, ep := range node.Endpoints {
+		endpoints = append(endpoints, ep.String())
+	}
+	nodeProto.Endpoints = endpoints
+
 	return nodeProto
 }
 
@@ -488,6 +541,24 @@ func (node *Node) SubnetRoutes() []netip.Prefix {
 // IsSubnetRouter reports if the node has any subnet routes.
 func (node *Node) IsSubnetRouter() bool {
 	return len(node.SubnetRoutes()) > 0
+}
+
+// Location returns a tailcfg.Location for this node if location data is set,
+// or nil if no location metadata is present.
+func (node *Node) Location() *tailcfg.Location {
+	if node.LocationCountryCode == "" && node.LocationCity == "" {
+		return nil
+	}
+
+	return &tailcfg.Location{
+		Country:     node.LocationCountry,
+		CountryCode: node.LocationCountryCode,
+		City:        node.LocationCity,
+		CityCode:    node.LocationCityCode,
+		Latitude:    node.LocationLatitude,
+		Longitude:   node.LocationLongitude,
+		Priority:    node.LocationPriority,
+	}
 }
 
 // AllApprovedRoutes returns the combination of SubnetRoutes and ExitRoutes.
@@ -614,6 +685,8 @@ func (node *Node) RegisterMethodToV1Enum() v1.RegisterMethod {
 		return v1.RegisterMethod_REGISTER_METHOD_OIDC
 	case "cli":
 		return v1.RegisterMethod_REGISTER_METHOD_CLI
+	case "external":
+		return v1.RegisterMethod_REGISTER_METHOD_EXTERNAL
 	default:
 		return v1.RegisterMethod_REGISTER_METHOD_UNSPECIFIED
 	}
@@ -839,6 +912,16 @@ func (nv NodeView) IsSubnetRouter() bool {
 	return nv.ж.IsSubnetRouter()
 }
 
+// Location returns a tailcfg.Location for this node if location data is set,
+// or nil if no location metadata is present.
+func (nv NodeView) Location() *tailcfg.Location {
+	if !nv.Valid() {
+		return nil
+	}
+
+	return nv.ж.Location()
+}
+
 func (nv NodeView) AllApprovedRoutes() []netip.Prefix {
 	if !nv.Valid() {
 		return nil
@@ -1056,11 +1139,12 @@ func TailNodes(
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
 	cfg *Config,
+	nodeAttrs []string,
 ) ([]*tailcfg.Node, error) {
 	tNodes := make([]*tailcfg.Node, 0, nodes.Len())
 
 	for _, node := range nodes.All() {
-		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg)
+		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg, nodeAttrs)
 		if err != nil {
 			return nil, err
 		}
@@ -1076,6 +1160,7 @@ func (nv NodeView) TailNode(
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
 	cfg *Config,
+	nodeAttrs []string,
 ) (*tailcfg.Node, error) {
 	if !nv.Valid() {
 		return nil, ErrInvalidNodeView
@@ -1116,6 +1201,14 @@ func (nv NodeView) TailNode(
 		capMap[tailcfg.CapabilityFileSharing] = []tailcfg.RawMessage{}
 	}
 
+	// Enable the suggested exit node UI for all nodes.
+	capMap[tailcfg.NodeAttrSuggestExitNodeUI] = []tailcfg.RawMessage{}
+
+	// Inject policy-driven node attributes into the CapMap.
+	for _, attr := range nodeAttrs {
+		capMap[tailcfg.NodeCapability(attr)] = []tailcfg.RawMessage{}
+	}
+
 	tNode := tailcfg.Node{
 		//nolint:gosec // G115: NodeID values are within int64 range
 		ID:       tailcfg.NodeID(nv.ID()),
@@ -1146,6 +1239,25 @@ func (nv NodeView) TailNode(
 
 		MachineAuthorized: !nv.IsExpired(),
 		Expired:           nv.IsExpired(),
+
+		IsWireGuardOnly: nv.IsWireGuardOnly(),
+		IsJailed:        nv.IsJailed(),
+	}
+
+	// Convert ExitNodeDNSResolvers from the immutable view back to []*dnstype.Resolver.
+	if resolversView := nv.ExitNodeDNSResolvers(); resolversView.Len() > 0 {
+		resolvers := make([]*dnstype.Resolver, resolversView.Len())
+		for i := range resolversView.Len() {
+			resolvers[i] = resolversView.At(i).AsStruct()
+		}
+		tNode.ExitNodeDNSResolvers = resolvers
+	}
+
+	// Inject location metadata into Hostinfo for exit node picker UI.
+	if loc := nv.Location(); loc != nil {
+		hi := nv.Hostinfo().AsStruct()
+		hi.Location = loc
+		tNode.Hostinfo = hi.View()
 	}
 
 	// Set LastSeen only for offline nodes to avoid confusing Tailscale clients

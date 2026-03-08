@@ -12,6 +12,7 @@ enum RegisterMethod {
   REGISTER_METHOD_AUTH_KEY = 1;
   REGISTER_METHOD_CLI = 2;
   REGISTER_METHOD_OIDC = 3;
+  REGISTER_METHOD_EXTERNAL = 4;
 }
 
 message Node {
@@ -53,6 +54,23 @@ message Node {
   repeated string available_routes = 24;
   repeated string subnet_routes = 25;
   repeated string tags = 26;
+
+  bool is_wireguard_only = 27;
+  bool is_jailed = 28;
+  repeated string endpoints = 29;
+
+  // owner_node_id is the ID of the headscale node that owns this external peer.
+  // Only set for WireGuard-only peers.
+  uint64 owner_node_id = 30;
+
+  // Location metadata for exit node picker UI grouping.
+  string location_country = 31;
+  string location_country_code = 32;
+  string location_city = 33;
+  string location_city_code = 34;
+  double location_latitude = 35;
+  double location_longitude = 36;
+  int32 location_priority = 37;
 }
 
 message RegisterNodeRequest {

@@ -220,6 +220,7 @@ func TestTailNode(t *testing.T) {
 					return primary.PrimaryRoutes(id)
 				},
 				cfg,
+				nil,
 			)
 
 			if (err != nil) != tt.wantErr {
@@ -276,6 +277,7 @@ func TestNodeExpiry(t *testing.T) {
 					return []netip.Prefix{}
 				},
 				&types.Config{Taildrop: types.TaildropConfig{Enabled: true}},
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("nodeExpiry() error = %v", err)

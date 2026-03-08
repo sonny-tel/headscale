@@ -75,12 +75,15 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 
 	_, matchers := b.mapper.state.Filter()
 
+	nodeAttrs := b.mapper.state.NodeAttrsForNode(nv)
+
 	tailnode, err := nv.TailNode(
 		b.capVer,
 		func(id types.NodeID) []netip.Prefix {
 			return policy.ReduceRoutes(nv, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
-		b.mapper.cfg)
+		b.mapper.cfg,
+		nodeAttrs)
 	if err != nil {
 		b.addError(err)
 		return b
@@ -256,7 +259,8 @@ func (b *MapResponseBuilder) buildTailPeers(peers views.Slice[types.NodeView]) (
 		func(id types.NodeID) []netip.Prefix {
 			return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
-		b.mapper.cfg)
+		b.mapper.cfg,
+		nil)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +287,53 @@ func (b *MapResponseBuilder) WithPeersRemoved(removedIDs ...types.NodeID) *MapRe
 	}
 
 	b.resp.PeersRemoved = tailscaleIDs
+
+	return b
+}
+
+// WithProviderPeers appends synthetic VPN provider relay nodes to the peer
+// list. Each relay node is cloned and annotated with per-client masquerade
+// addresses so the Tailscale client sends traffic with the provider-assigned
+// source IP inside the WireGuard tunnel.
+func (b *MapResponseBuilder) WithProviderPeers() *MapResponseBuilder {
+	nodes := b.mapper.state.ProviderRelayNodes()
+	if len(nodes) == 0 {
+		return b
+	}
+
+	// Look up the provider-assigned masquerade IPs for the requesting node.
+	masqV4, masqV6 := b.mapper.state.ProviderMasqAddrsForNode(b.nodeID)
+
+	// Clone each synthetic node so we can set per‑client masquerade addresses
+	// without mutating the cached originals.
+	cloned := make([]*tailcfg.Node, len(nodes))
+	for i, n := range nodes {
+		cp := *n // shallow copy — sufficient since we only set pointer fields
+		if masqV4.IsValid() {
+			cp.SelfNodeV4MasqAddrForThisPeer = &masqV4
+		}
+
+		if masqV6.IsValid() {
+			cp.SelfNodeV6MasqAddrForThisPeer = &masqV6
+		}
+
+		cloned[i] = &cp
+	}
+
+	if b.resp.Peers != nil {
+		b.resp.Peers = append(b.resp.Peers, cloned...)
+		sort.SliceStable(b.resp.Peers, func(x, y int) bool {
+			return b.resp.Peers[x].ID < b.resp.Peers[y].ID
+		})
+	} else if b.resp.PeersChanged != nil {
+		b.resp.PeersChanged = append(b.resp.PeersChanged, cloned...)
+		sort.SliceStable(b.resp.PeersChanged, func(x, y int) bool {
+			return b.resp.PeersChanged[x].ID < b.resp.PeersChanged[y].ID
+		})
+	} else {
+		// No peers set yet — treat as full peer list.
+		b.resp.Peers = cloned
+	}
 
 	return b
 }

@@ -1651,6 +1651,15 @@ type Policy struct {
 	ACLs          []ACL              `json:"acls,omitempty"`
 	AutoApprovers AutoApproverPolicy `json:"autoApprovers"`
 	SSHs          []SSH              `json:"ssh,omitempty"`
+	NodeAttrs     []NodeAttrRule     `json:"nodeAttrs,omitempty"`
+}
+
+// NodeAttrRule maps target nodes to a set of capability attributes.
+// Targets use the same syntax as ACL sources/destinations: IPs, CIDRs,
+// tags, users, groups, autogroups, or "*" for all nodes.
+type NodeAttrRule struct {
+	Target Aliases  `json:"target"`
+	Attr   []string `json:"attr"`
 }
 
 // MarshalJSON is deliberately not implemented for Policy.

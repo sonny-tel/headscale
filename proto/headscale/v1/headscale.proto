@@ -10,6 +10,7 @@ import "headscale/v1/node.proto";
 import "headscale/v1/apikey.proto";
 import "headscale/v1/auth.proto";
 import "headscale/v1/policy.proto";
+import "headscale/v1/provider.proto";
 
 service HeadscaleService {
   // --- User start ---
@@ -213,6 +214,52 @@ service HeadscaleService {
     };
   }
   // --- Health end ---
+
+  // --- Provider start ---
+  rpc AddProviderAccount(AddProviderAccountRequest)
+      returns (AddProviderAccountResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/provider/account"
+      body : "*"
+    };
+  }
+
+  rpc RemoveProviderAccount(RemoveProviderAccountRequest)
+      returns (RemoveProviderAccountResponse) {
+    option (google.api.http) = {
+      delete : "/api/v1/provider/account/{id}"
+    };
+  }
+
+  rpc ListProviderAccounts(ListProviderAccountsRequest)
+      returns (ListProviderAccountsResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/provider/account"
+    };
+  }
+
+  rpc SyncProviderRelays(SyncProviderRelaysRequest)
+      returns (SyncProviderRelaysResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/provider/relay/sync"
+      body : "*"
+    };
+  }
+
+  rpc ListProviderRelays(ListProviderRelaysRequest)
+      returns (ListProviderRelaysResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/provider/relay"
+    };
+  }
+
+  rpc ListProviderAllocations(ListProviderAllocationsRequest)
+      returns (ListProviderAllocationsResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/provider/allocation"
+    };
+  }
+  // --- Provider end ---
 
   // Implement Tailscale API
   // rpc GetDevice(GetDeviceRequest) returns(GetDeviceResponse) {

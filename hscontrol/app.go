@@ -32,6 +32,8 @@ import (
 	derpServer "github.com/juanfont/headscale/hscontrol/derp/server"
 	"github.com/juanfont/headscale/hscontrol/dns"
 	"github.com/juanfont/headscale/hscontrol/mapper"
+	"github.com/juanfont/headscale/hscontrol/provider"
+	_ "github.com/juanfont/headscale/hscontrol/provider/mullvad" // register Mullvad provider
 	"github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/types/change"
@@ -244,6 +246,20 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		app.DERPServer = embeddedDERPServer
 	}
 
+	// Initialize VPN provider manager if any provider accounts exist in the database.
+	if err := app.initProviderManager(); err != nil {
+		log.Warn().Err(err).Msg("failed to initialize VPN provider manager")
+	}
+
+	// Verify existing provider allocations are still valid on the provider API,
+	// then reconcile to register any missing keys. This approach avoids the
+	// destructive flush+re-register pattern which could create orphaned keys
+	// through API timing races.
+	if app.state.ProviderManager() != nil {
+		app.state.VerifyProviderAllocations(context.Background())
+		app.state.ReconcileProviderAllocations(context.Background())
+	}
+
 	return &app, nil
 }
 
@@ -251,6 +267,50 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 func (h *Headscale) redirect(w http.ResponseWriter, req *http.Request) {
 	target := h.cfg.ServerURL + req.URL.RequestURI()
 	http.Redirect(w, req, target, http.StatusFound)
+}
+
+const providerSyncInterval = 1 * time.Hour
+
+// initProviderManager checks for VPN provider accounts in the database and,
+// if any exist, creates a provider.Manager, registers all relevant providers,
+// and performs an initial relay sync.
+func (h *Headscale) initProviderManager() error {
+	accounts, err := h.state.DB().ListProviderAccounts("")
+	if err != nil {
+		return fmt.Errorf("listing provider accounts: %w", err)
+	}
+
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	mgr := provider.NewManager(h.cfg.BaseDomain)
+
+	// Determine unique provider names from accounts.
+	seen := make(map[string]bool)
+	for _, acct := range accounts {
+		if acct.Enabled && !seen[acct.ProviderName] {
+			seen[acct.ProviderName] = true
+
+			if err := mgr.RegisterProvider(acct.ProviderName); err != nil {
+				log.Warn().Err(err).Str("provider", acct.ProviderName).Msg("failed to register provider")
+			}
+		}
+	}
+
+	h.state.SetProviderManager(mgr)
+
+	// Perform initial relay sync for each registered provider.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for name := range seen {
+		if err := h.state.SyncProviderRelays(ctx, name); err != nil {
+			log.Warn().Err(err).Str("provider", name).Msg("initial provider relay sync failed")
+		}
+	}
+
+	return nil
 }
 
 func (h *Headscale) scheduledTasks(ctx context.Context) {
@@ -273,6 +333,14 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 		extraRecordsUpdate = h.extraRecordMan.UpdateCh()
 	} else {
 		extraRecordsUpdate = make(chan []tailcfg.DNSRecord)
+	}
+
+	providerTickerChan := make(<-chan time.Time)
+	if h.state.ProviderManager() != nil {
+		providerTicker := time.NewTicker(providerSyncInterval)
+		defer providerTicker.Stop()
+
+		providerTickerChan = providerTicker.C
 	}
 
 	for {
@@ -331,6 +399,34 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 			h.cfg.TailcfgDNSConfig.ExtraRecords = records
 
 			h.Change(change.ExtraRecords())
+
+		case <-providerTickerChan:
+			log.Info().Msg("syncing VPN provider relays")
+
+			mgr := h.state.ProviderManager()
+			if mgr == nil {
+				continue
+			}
+
+			for _, name := range provider.Registered() {
+				if _, ok := mgr.Provider(name); !ok {
+					continue
+				}
+
+				if err := h.state.SyncProviderRelays(ctx, name); err != nil {
+					log.Error().Err(err).Str("provider", name).Msg("failed to sync provider relays")
+
+					continue
+				}
+			}
+
+			// Reconcile key allocations after relay sync.
+			h.state.ReconcileProviderAllocations(ctx)
+
+			h.Change(change.Change{
+				Reason:       "provider relay sync",
+				SendAllPeers: true,
+			})
 		}
 	}
 }

@@ -29,6 +29,7 @@ const (
 	RegisterMethod_REGISTER_METHOD_AUTH_KEY    RegisterMethod = 1
 	RegisterMethod_REGISTER_METHOD_CLI         RegisterMethod = 2
 	RegisterMethod_REGISTER_METHOD_OIDC        RegisterMethod = 3
+	RegisterMethod_REGISTER_METHOD_EXTERNAL    RegisterMethod = 4
 )
 
 // Enum value maps for RegisterMethod.
@@ -38,12 +39,14 @@ var (
 		1: "REGISTER_METHOD_AUTH_KEY",
 		2: "REGISTER_METHOD_CLI",
 		3: "REGISTER_METHOD_OIDC",
+		4: "REGISTER_METHOD_EXTERNAL",
 	}
 	RegisterMethod_value = map[string]int32{
 		"REGISTER_METHOD_UNSPECIFIED": 0,
 		"REGISTER_METHOD_AUTH_KEY":    1,
 		"REGISTER_METHOD_CLI":         2,
 		"REGISTER_METHOD_OIDC":        3,
+		"REGISTER_METHOD_EXTERNAL":    4,
 	}
 )
 
@@ -98,8 +101,22 @@ type Node struct {
 	AvailableRoutes []string `protobuf:"bytes,24,rep,name=available_routes,json=availableRoutes,proto3" json:"available_routes,omitempty"`
 	SubnetRoutes    []string `protobuf:"bytes,25,rep,name=subnet_routes,json=subnetRoutes,proto3" json:"subnet_routes,omitempty"`
 	Tags            []string `protobuf:"bytes,26,rep,name=tags,proto3" json:"tags,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	IsWireguardOnly bool     `protobuf:"varint,27,opt,name=is_wireguard_only,json=isWireguardOnly,proto3" json:"is_wireguard_only,omitempty"`
+	IsJailed        bool     `protobuf:"varint,28,opt,name=is_jailed,json=isJailed,proto3" json:"is_jailed,omitempty"`
+	Endpoints       []string `protobuf:"bytes,29,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
+	// owner_node_id is the ID of the headscale node that owns this external peer.
+	// Only set for WireGuard-only peers.
+	OwnerNodeId uint64 `protobuf:"varint,30,opt,name=owner_node_id,json=ownerNodeId,proto3" json:"owner_node_id,omitempty"`
+	// Location metadata for exit node picker UI grouping.
+	LocationCountry     string  `protobuf:"bytes,31,opt,name=location_country,json=locationCountry,proto3" json:"location_country,omitempty"`
+	LocationCountryCode string  `protobuf:"bytes,32,opt,name=location_country_code,json=locationCountryCode,proto3" json:"location_country_code,omitempty"`
+	LocationCity        string  `protobuf:"bytes,33,opt,name=location_city,json=locationCity,proto3" json:"location_city,omitempty"`
+	LocationCityCode    string  `protobuf:"bytes,34,opt,name=location_city_code,json=locationCityCode,proto3" json:"location_city_code,omitempty"`
+	LocationLatitude    float64 `protobuf:"fixed64,35,opt,name=location_latitude,json=locationLatitude,proto3" json:"location_latitude,omitempty"`
+	LocationLongitude   float64 `protobuf:"fixed64,36,opt,name=location_longitude,json=locationLongitude,proto3" json:"location_longitude,omitempty"`
+	LocationPriority    int32   `protobuf:"varint,37,opt,name=location_priority,json=locationPriority,proto3" json:"location_priority,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Node) Reset() {
@@ -256,6 +273,83 @@ func (x *Node) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *Node) GetIsWireguardOnly() bool {
+	if x != nil {
+		return x.IsWireguardOnly
+	}
+	return false
+}
+
+func (x *Node) GetIsJailed() bool {
+	if x != nil {
+		return x.IsJailed
+	}
+	return false
+}
+
+func (x *Node) GetEndpoints() []string {
+	if x != nil {
+		return x.Endpoints
+	}
+	return nil
+}
+
+func (x *Node) GetOwnerNodeId() uint64 {
+	if x != nil {
+		return x.OwnerNodeId
+	}
+	return 0
+}
+
+func (x *Node) GetLocationCountry() string {
+	if x != nil {
+		return x.LocationCountry
+	}
+	return ""
+}
+
+func (x *Node) GetLocationCountryCode() string {
+	if x != nil {
+		return x.LocationCountryCode
+	}
+	return ""
+}
+
+func (x *Node) GetLocationCity() string {
+	if x != nil {
+		return x.LocationCity
+	}
+	return ""
+}
+
+func (x *Node) GetLocationCityCode() string {
+	if x != nil {
+		return x.LocationCityCode
+	}
+	return ""
+}
+
+func (x *Node) GetLocationLatitude() float64 {
+	if x != nil {
+		return x.LocationLatitude
+	}
+	return 0
+}
+
+func (x *Node) GetLocationLongitude() float64 {
+	if x != nil {
+		return x.LocationLongitude
+	}
+	return 0
+}
+
+func (x *Node) GetLocationPriority() int32 {
+	if x != nil {
+		return x.LocationPriority
+	}
+	return 0
 }
 
 type RegisterNodeRequest struct {
@@ -1207,7 +1301,7 @@ var File_headscale_v1_node_proto protoreflect.FileDescriptor
 
 const file_headscale_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\xc9\x05\n" +
+	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\x8f\t\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1f\n" +
 	"\vmachine_key\x18\x02 \x01(\tR\n" +
@@ -1231,7 +1325,18 @@ const file_headscale_v1_node_proto_rawDesc = "" +
 	"\x0fapproved_routes\x18\x17 \x03(\tR\x0eapprovedRoutes\x12)\n" +
 	"\x10available_routes\x18\x18 \x03(\tR\x0favailableRoutes\x12#\n" +
 	"\rsubnet_routes\x18\x19 \x03(\tR\fsubnetRoutes\x12\x12\n" +
-	"\x04tags\x18\x1a \x03(\tR\x04tagsJ\x04\b\t\x10\n" +
+	"\x04tags\x18\x1a \x03(\tR\x04tags\x12*\n" +
+	"\x11is_wireguard_only\x18\x1b \x01(\bR\x0fisWireguardOnly\x12\x1b\n" +
+	"\tis_jailed\x18\x1c \x01(\bR\bisJailed\x12\x1c\n" +
+	"\tendpoints\x18\x1d \x03(\tR\tendpoints\x12\"\n" +
+	"\rowner_node_id\x18\x1e \x01(\x04R\vownerNodeId\x12)\n" +
+	"\x10location_country\x18\x1f \x01(\tR\x0flocationCountry\x122\n" +
+	"\x15location_country_code\x18  \x01(\tR\x13locationCountryCode\x12#\n" +
+	"\rlocation_city\x18! \x01(\tR\flocationCity\x12,\n" +
+	"\x12location_city_code\x18\" \x01(\tR\x10locationCityCode\x12+\n" +
+	"\x11location_latitude\x18# \x01(\x01R\x10locationLatitude\x12-\n" +
+	"\x12location_longitude\x18$ \x01(\x01R\x11locationLongitude\x12+\n" +
+	"\x11location_priority\x18% \x01(\x05R\x10locationPriorityJ\x04\b\t\x10\n" +
 	"J\x04\b\x0e\x10\x15\";\n" +
 	"\x13RegisterNodeRequest\x12\x12\n" +
 	"\x04user\x18\x01 \x01(\tR\x04user\x12\x10\n" +
@@ -1280,12 +1385,13 @@ const file_headscale_v1_node_proto_rawDesc = "" +
 	"\x16BackfillNodeIPsRequest\x12\x1c\n" +
 	"\tconfirmed\x18\x01 \x01(\bR\tconfirmed\"3\n" +
 	"\x17BackfillNodeIPsResponse\x12\x18\n" +
-	"\achanges\x18\x01 \x03(\tR\achanges*\x82\x01\n" +
+	"\achanges\x18\x01 \x03(\tR\achanges*\xa0\x01\n" +
 	"\x0eRegisterMethod\x12\x1f\n" +
 	"\x1bREGISTER_METHOD_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REGISTER_METHOD_AUTH_KEY\x10\x01\x12\x17\n" +
 	"\x13REGISTER_METHOD_CLI\x10\x02\x12\x18\n" +
-	"\x14REGISTER_METHOD_OIDC\x10\x03B)Z'github.com/juanfont/headscale/gen/go/v1b\x06proto3"
+	"\x14REGISTER_METHOD_OIDC\x10\x03\x12\x1c\n" +
+	"\x18REGISTER_METHOD_EXTERNAL\x10\x04B)Z'github.com/juanfont/headscale/gen/go/v1b\x06proto3"
 
 var (
 	file_headscale_v1_node_proto_rawDescOnce sync.Once

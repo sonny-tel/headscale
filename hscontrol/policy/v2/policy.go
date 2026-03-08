@@ -825,6 +825,39 @@ func (pm *PolicyManager) Version() int {
 	return 2
 }
 
+// NodeAttrsForNode evaluates all nodeAttrs rules in the policy and returns
+// the deduplicated list of attribute strings that apply to the given node.
+func (pm *PolicyManager) NodeAttrsForNode(node types.NodeView) []string {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if pm.pol == nil || len(pm.pol.NodeAttrs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var attrs []string
+
+	for _, rule := range pm.pol.NodeAttrs {
+		ipSet, err := rule.Target.Resolve(pm.pol, pm.users, pm.nodes)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to resolve nodeAttrs target")
+			continue
+		}
+
+		if node.InIPSet(ipSet) {
+			for _, attr := range rule.Attr {
+				if _, ok := seen[attr]; !ok {
+					seen[attr] = struct{}{}
+					attrs = append(attrs, attr)
+				}
+			}
+		}
+	}
+
+	return attrs
+}
+
 func (pm *PolicyManager) DebugString() string {
 	if pm == nil {
 		return "PolicyManager is not setup"

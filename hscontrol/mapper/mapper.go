@@ -175,6 +175,7 @@ func (m *mapper) fullMapResponse(
 		WithUserProfiles(peers).
 		WithPacketFilters().
 		WithPeers(peers).
+		WithProviderPeers().
 		Build()
 }
 
@@ -243,6 +244,8 @@ func (m *mapper) policyChangeResponse(
 		builder.WithPeerChanges(currentPeers)
 	}
 
+	builder.WithProviderPeers()
+
 	return builder.Build()
 }
 
@@ -307,6 +310,8 @@ func (m *mapper) buildFromChange(
 	if len(resp.PeerPatches) > 0 {
 		builder.WithPeerChangedPatch(resp.PeerPatches)
 	}
+
+	builder.WithProviderPeers()
 
 	return builder.Build()
 }

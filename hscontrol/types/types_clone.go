@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 	"tailscale.com/types/ptr"
 )
@@ -78,34 +79,58 @@ func (src *Node) Clone() *Node {
 	if dst.IsOnline != nil {
 		dst.IsOnline = ptr.To(*src.IsOnline)
 	}
+	if src.ExitNodeDNSResolvers != nil {
+		dst.ExitNodeDNSResolvers = make([]*dnstype.Resolver, len(src.ExitNodeDNSResolvers))
+		for i := range dst.ExitNodeDNSResolvers {
+			if src.ExitNodeDNSResolvers[i] == nil {
+				dst.ExitNodeDNSResolvers[i] = nil
+			} else {
+				dst.ExitNodeDNSResolvers[i] = src.ExitNodeDNSResolvers[i].Clone()
+			}
+		}
+	}
+	if dst.OwnerNodeID != nil {
+		dst.OwnerNodeID = ptr.To(*src.OwnerNodeID)
+	}
 	return dst
 }
 
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _NodeCloneNeedsRegeneration = Node(struct {
-	ID             NodeID
-	MachineKey     key.MachinePublic
-	NodeKey        key.NodePublic
-	DiscoKey       key.DiscoPublic
-	Endpoints      []netip.AddrPort
-	Hostinfo       *tailcfg.Hostinfo
-	IPv4           *netip.Addr
-	IPv6           *netip.Addr
-	Hostname       string
-	GivenName      string
-	UserID         *uint
-	User           *User
-	RegisterMethod string
-	Tags           []string
-	AuthKeyID      *uint64
-	AuthKey        *PreAuthKey
-	Expiry         *time.Time
-	LastSeen       *time.Time
-	ApprovedRoutes []netip.Prefix
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time
-	IsOnline       *bool
+	ID                   NodeID
+	MachineKey           key.MachinePublic
+	NodeKey              key.NodePublic
+	DiscoKey             key.DiscoPublic
+	Endpoints            []netip.AddrPort
+	Hostinfo             *tailcfg.Hostinfo
+	IPv4                 *netip.Addr
+	IPv6                 *netip.Addr
+	Hostname             string
+	GivenName            string
+	UserID               *uint
+	User                 *User
+	RegisterMethod       string
+	Tags                 []string
+	AuthKeyID            *uint64
+	AuthKey              *PreAuthKey
+	Expiry               *time.Time
+	LastSeen             *time.Time
+	ApprovedRoutes       []netip.Prefix
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	DeletedAt            *time.Time
+	IsOnline             *bool
+	IsWireGuardOnly      bool
+	IsJailed             bool
+	ExitNodeDNSResolvers []*dnstype.Resolver
+	OwnerNodeID          *NodeID
+	LocationCountry      string
+	LocationCountryCode  string
+	LocationCity         string
+	LocationCityCode     string
+	LocationLatitude     float64
+	LocationLongitude    float64
+	LocationPriority     int
 }{})
 
 // Clone makes a deep copy of PreAuthKey.

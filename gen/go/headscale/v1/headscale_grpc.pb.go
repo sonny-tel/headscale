@@ -19,34 +19,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HeadscaleService_CreateUser_FullMethodName        = "/headscale.v1.HeadscaleService/CreateUser"
-	HeadscaleService_RenameUser_FullMethodName        = "/headscale.v1.HeadscaleService/RenameUser"
-	HeadscaleService_DeleteUser_FullMethodName        = "/headscale.v1.HeadscaleService/DeleteUser"
-	HeadscaleService_ListUsers_FullMethodName         = "/headscale.v1.HeadscaleService/ListUsers"
-	HeadscaleService_CreatePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
-	HeadscaleService_ExpirePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
-	HeadscaleService_DeletePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
-	HeadscaleService_ListPreAuthKeys_FullMethodName   = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
-	HeadscaleService_DebugCreateNode_FullMethodName   = "/headscale.v1.HeadscaleService/DebugCreateNode"
-	HeadscaleService_GetNode_FullMethodName           = "/headscale.v1.HeadscaleService/GetNode"
-	HeadscaleService_SetTags_FullMethodName           = "/headscale.v1.HeadscaleService/SetTags"
-	HeadscaleService_SetApprovedRoutes_FullMethodName = "/headscale.v1.HeadscaleService/SetApprovedRoutes"
-	HeadscaleService_RegisterNode_FullMethodName      = "/headscale.v1.HeadscaleService/RegisterNode"
-	HeadscaleService_DeleteNode_FullMethodName        = "/headscale.v1.HeadscaleService/DeleteNode"
-	HeadscaleService_ExpireNode_FullMethodName        = "/headscale.v1.HeadscaleService/ExpireNode"
-	HeadscaleService_RenameNode_FullMethodName        = "/headscale.v1.HeadscaleService/RenameNode"
-	HeadscaleService_ListNodes_FullMethodName         = "/headscale.v1.HeadscaleService/ListNodes"
-	HeadscaleService_BackfillNodeIPs_FullMethodName   = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
-	HeadscaleService_AuthRegister_FullMethodName      = "/headscale.v1.HeadscaleService/AuthRegister"
-	HeadscaleService_AuthApprove_FullMethodName       = "/headscale.v1.HeadscaleService/AuthApprove"
-	HeadscaleService_AuthReject_FullMethodName        = "/headscale.v1.HeadscaleService/AuthReject"
-	HeadscaleService_CreateApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/CreateApiKey"
-	HeadscaleService_ExpireApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/ExpireApiKey"
-	HeadscaleService_ListApiKeys_FullMethodName       = "/headscale.v1.HeadscaleService/ListApiKeys"
-	HeadscaleService_DeleteApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/DeleteApiKey"
-	HeadscaleService_GetPolicy_FullMethodName         = "/headscale.v1.HeadscaleService/GetPolicy"
-	HeadscaleService_SetPolicy_FullMethodName         = "/headscale.v1.HeadscaleService/SetPolicy"
-	HeadscaleService_Health_FullMethodName            = "/headscale.v1.HeadscaleService/Health"
+	HeadscaleService_CreateUser_FullMethodName              = "/headscale.v1.HeadscaleService/CreateUser"
+	HeadscaleService_RenameUser_FullMethodName              = "/headscale.v1.HeadscaleService/RenameUser"
+	HeadscaleService_DeleteUser_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteUser"
+	HeadscaleService_ListUsers_FullMethodName               = "/headscale.v1.HeadscaleService/ListUsers"
+	HeadscaleService_CreatePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
+	HeadscaleService_ExpirePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
+	HeadscaleService_DeletePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
+	HeadscaleService_ListPreAuthKeys_FullMethodName         = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
+	HeadscaleService_DebugCreateNode_FullMethodName         = "/headscale.v1.HeadscaleService/DebugCreateNode"
+	HeadscaleService_GetNode_FullMethodName                 = "/headscale.v1.HeadscaleService/GetNode"
+	HeadscaleService_SetTags_FullMethodName                 = "/headscale.v1.HeadscaleService/SetTags"
+	HeadscaleService_SetApprovedRoutes_FullMethodName       = "/headscale.v1.HeadscaleService/SetApprovedRoutes"
+	HeadscaleService_RegisterNode_FullMethodName            = "/headscale.v1.HeadscaleService/RegisterNode"
+	HeadscaleService_DeleteNode_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteNode"
+	HeadscaleService_ExpireNode_FullMethodName              = "/headscale.v1.HeadscaleService/ExpireNode"
+	HeadscaleService_RenameNode_FullMethodName              = "/headscale.v1.HeadscaleService/RenameNode"
+	HeadscaleService_ListNodes_FullMethodName               = "/headscale.v1.HeadscaleService/ListNodes"
+	HeadscaleService_BackfillNodeIPs_FullMethodName         = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
+	HeadscaleService_AuthRegister_FullMethodName            = "/headscale.v1.HeadscaleService/AuthRegister"
+	HeadscaleService_AuthApprove_FullMethodName             = "/headscale.v1.HeadscaleService/AuthApprove"
+	HeadscaleService_AuthReject_FullMethodName              = "/headscale.v1.HeadscaleService/AuthReject"
+	HeadscaleService_CreateApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/CreateApiKey"
+	HeadscaleService_ExpireApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/ExpireApiKey"
+	HeadscaleService_ListApiKeys_FullMethodName             = "/headscale.v1.HeadscaleService/ListApiKeys"
+	HeadscaleService_DeleteApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/DeleteApiKey"
+	HeadscaleService_GetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/GetPolicy"
+	HeadscaleService_SetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/SetPolicy"
+	HeadscaleService_Health_FullMethodName                  = "/headscale.v1.HeadscaleService/Health"
+	HeadscaleService_AddProviderAccount_FullMethodName      = "/headscale.v1.HeadscaleService/AddProviderAccount"
+	HeadscaleService_RemoveProviderAccount_FullMethodName   = "/headscale.v1.HeadscaleService/RemoveProviderAccount"
+	HeadscaleService_ListProviderAccounts_FullMethodName    = "/headscale.v1.HeadscaleService/ListProviderAccounts"
+	HeadscaleService_SyncProviderRelays_FullMethodName      = "/headscale.v1.HeadscaleService/SyncProviderRelays"
+	HeadscaleService_ListProviderRelays_FullMethodName      = "/headscale.v1.HeadscaleService/ListProviderRelays"
+	HeadscaleService_ListProviderAllocations_FullMethodName = "/headscale.v1.HeadscaleService/ListProviderAllocations"
 )
 
 // HeadscaleServiceClient is the client API for HeadscaleService service.
@@ -88,6 +94,13 @@ type HeadscaleServiceClient interface {
 	SetPolicy(ctx context.Context, in *SetPolicyRequest, opts ...grpc.CallOption) (*SetPolicyResponse, error)
 	// --- Health start ---
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// --- Provider start ---
+	AddProviderAccount(ctx context.Context, in *AddProviderAccountRequest, opts ...grpc.CallOption) (*AddProviderAccountResponse, error)
+	RemoveProviderAccount(ctx context.Context, in *RemoveProviderAccountRequest, opts ...grpc.CallOption) (*RemoveProviderAccountResponse, error)
+	ListProviderAccounts(ctx context.Context, in *ListProviderAccountsRequest, opts ...grpc.CallOption) (*ListProviderAccountsResponse, error)
+	SyncProviderRelays(ctx context.Context, in *SyncProviderRelaysRequest, opts ...grpc.CallOption) (*SyncProviderRelaysResponse, error)
+	ListProviderRelays(ctx context.Context, in *ListProviderRelaysRequest, opts ...grpc.CallOption) (*ListProviderRelaysResponse, error)
+	ListProviderAllocations(ctx context.Context, in *ListProviderAllocationsRequest, opts ...grpc.CallOption) (*ListProviderAllocationsResponse, error)
 }
 
 type headscaleServiceClient struct {
@@ -378,6 +391,66 @@ func (c *headscaleServiceClient) Health(ctx context.Context, in *HealthRequest, 
 	return out, nil
 }
 
+func (c *headscaleServiceClient) AddProviderAccount(ctx context.Context, in *AddProviderAccountRequest, opts ...grpc.CallOption) (*AddProviderAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddProviderAccountResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_AddProviderAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) RemoveProviderAccount(ctx context.Context, in *RemoveProviderAccountRequest, opts ...grpc.CallOption) (*RemoveProviderAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveProviderAccountResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_RemoveProviderAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ListProviderAccounts(ctx context.Context, in *ListProviderAccountsRequest, opts ...grpc.CallOption) (*ListProviderAccountsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProviderAccountsResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ListProviderAccounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) SyncProviderRelays(ctx context.Context, in *SyncProviderRelaysRequest, opts ...grpc.CallOption) (*SyncProviderRelaysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncProviderRelaysResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_SyncProviderRelays_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ListProviderRelays(ctx context.Context, in *ListProviderRelaysRequest, opts ...grpc.CallOption) (*ListProviderRelaysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProviderRelaysResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ListProviderRelays_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ListProviderAllocations(ctx context.Context, in *ListProviderAllocationsRequest, opts ...grpc.CallOption) (*ListProviderAllocationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProviderAllocationsResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ListProviderAllocations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HeadscaleServiceServer is the server API for HeadscaleService service.
 // All implementations must embed UnimplementedHeadscaleServiceServer
 // for forward compatibility.
@@ -417,6 +490,13 @@ type HeadscaleServiceServer interface {
 	SetPolicy(context.Context, *SetPolicyRequest) (*SetPolicyResponse, error)
 	// --- Health start ---
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// --- Provider start ---
+	AddProviderAccount(context.Context, *AddProviderAccountRequest) (*AddProviderAccountResponse, error)
+	RemoveProviderAccount(context.Context, *RemoveProviderAccountRequest) (*RemoveProviderAccountResponse, error)
+	ListProviderAccounts(context.Context, *ListProviderAccountsRequest) (*ListProviderAccountsResponse, error)
+	SyncProviderRelays(context.Context, *SyncProviderRelaysRequest) (*SyncProviderRelaysResponse, error)
+	ListProviderRelays(context.Context, *ListProviderRelaysRequest) (*ListProviderRelaysResponse, error)
+	ListProviderAllocations(context.Context, *ListProviderAllocationsRequest) (*ListProviderAllocationsResponse, error)
 	mustEmbedUnimplementedHeadscaleServiceServer()
 }
 
@@ -510,6 +590,24 @@ func (UnimplementedHeadscaleServiceServer) SetPolicy(context.Context, *SetPolicy
 }
 func (UnimplementedHeadscaleServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) AddProviderAccount(context.Context, *AddProviderAccountRequest) (*AddProviderAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddProviderAccount not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) RemoveProviderAccount(context.Context, *RemoveProviderAccountRequest) (*RemoveProviderAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveProviderAccount not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ListProviderAccounts(context.Context, *ListProviderAccountsRequest) (*ListProviderAccountsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProviderAccounts not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) SyncProviderRelays(context.Context, *SyncProviderRelaysRequest) (*SyncProviderRelaysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncProviderRelays not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ListProviderRelays(context.Context, *ListProviderRelaysRequest) (*ListProviderRelaysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProviderRelays not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ListProviderAllocations(context.Context, *ListProviderAllocationsRequest) (*ListProviderAllocationsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProviderAllocations not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) mustEmbedUnimplementedHeadscaleServiceServer() {}
 func (UnimplementedHeadscaleServiceServer) testEmbeddedByValue()                          {}
@@ -1036,6 +1134,114 @@ func _HeadscaleService_Health_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_AddProviderAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddProviderAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).AddProviderAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_AddProviderAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).AddProviderAccount(ctx, req.(*AddProviderAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_RemoveProviderAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveProviderAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).RemoveProviderAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_RemoveProviderAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).RemoveProviderAccount(ctx, req.(*RemoveProviderAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ListProviderAccounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProviderAccountsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ListProviderAccounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ListProviderAccounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ListProviderAccounts(ctx, req.(*ListProviderAccountsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_SyncProviderRelays_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncProviderRelaysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).SyncProviderRelays(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_SyncProviderRelays_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).SyncProviderRelays(ctx, req.(*SyncProviderRelaysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ListProviderRelays_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProviderRelaysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ListProviderRelays(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ListProviderRelays_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ListProviderRelays(ctx, req.(*ListProviderRelaysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ListProviderAllocations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProviderAllocationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ListProviderAllocations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ListProviderAllocations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ListProviderAllocations(ctx, req.(*ListProviderAllocationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HeadscaleService_ServiceDesc is the grpc.ServiceDesc for HeadscaleService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1154,6 +1360,30 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _HeadscaleService_Health_Handler,
+		},
+		{
+			MethodName: "AddProviderAccount",
+			Handler:    _HeadscaleService_AddProviderAccount_Handler,
+		},
+		{
+			MethodName: "RemoveProviderAccount",
+			Handler:    _HeadscaleService_RemoveProviderAccount_Handler,
+		},
+		{
+			MethodName: "ListProviderAccounts",
+			Handler:    _HeadscaleService_ListProviderAccounts_Handler,
+		},
+		{
+			MethodName: "SyncProviderRelays",
+			Handler:    _HeadscaleService_SyncProviderRelays_Handler,
+		},
+		{
+			MethodName: "ListProviderRelays",
+			Handler:    _HeadscaleService_ListProviderRelays_Handler,
+		},
+		{
+			MethodName: "ListProviderAllocations",
+			Handler:    _HeadscaleService_ListProviderAllocations_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

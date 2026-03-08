@@ -727,6 +727,142 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				// Add support for external WireGuard-only peers and jailed nodes.
+				// is_wireguard_only marks non-Tailscale WireGuard peers that don't speak Disco/DERP.
+				// is_jailed marks nodes that cannot initiate connections into the tailnet.
+				// exit_node_dns_resolvers stores DNS resolvers for WG-only exit nodes.
+				ID: "202603051200-add-wireguard-only-jailed",
+				Migrate: func(tx *gorm.DB) error {
+					if !tx.Migrator().HasColumn(&types.Node{}, "is_wireguard_only") {
+						err := tx.Exec(
+							"ALTER TABLE nodes ADD COLUMN is_wireguard_only numeric NOT NULL DEFAULT false",
+						).Error
+						if err != nil {
+							return fmt.Errorf("adding is_wireguard_only column: %w", err)
+						}
+					}
+
+					if !tx.Migrator().HasColumn(&types.Node{}, "is_jailed") {
+						err := tx.Exec(
+							"ALTER TABLE nodes ADD COLUMN is_jailed numeric NOT NULL DEFAULT false",
+						).Error
+						if err != nil {
+							return fmt.Errorf("adding is_jailed column: %w", err)
+						}
+					}
+
+					if !tx.Migrator().HasColumn(&types.Node{}, "exit_node_dns_resolvers") {
+						err := tx.Exec(
+							"ALTER TABLE nodes ADD COLUMN exit_node_dns_resolvers text",
+						).Error
+						if err != nil {
+							return fmt.Errorf("adding exit_node_dns_resolvers column: %w", err)
+						}
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Add owner_node_id FK and location columns for external WireGuard peers.
+				// owner_node_id links an external peer to its owning headscale node (1:1).
+				// Location columns populate tailcfg.Location for exit node picker UI.
+				ID: "202603060100-add-external-peer-owner-location",
+				Migrate: func(tx *gorm.DB) error {
+					if !tx.Migrator().HasColumn(&types.Node{}, "owner_node_id") {
+						err := tx.Exec(
+							"ALTER TABLE nodes ADD COLUMN owner_node_id bigint REFERENCES nodes(id) ON DELETE CASCADE",
+						).Error
+						if err != nil {
+							return fmt.Errorf("adding owner_node_id column: %w", err)
+						}
+					}
+
+					locationColumns := []struct {
+						name string
+						typ  string
+					}{
+						{"location_country", "text"},
+						{"location_country_code", "text"},
+						{"location_city", "text"},
+						{"location_city_code", "text"},
+						{"location_latitude", "real"},
+						{"location_longitude", "real"},
+						{"location_priority", "integer DEFAULT 0"},
+					}
+					for _, col := range locationColumns {
+						if !tx.Migrator().HasColumn(&types.Node{}, col.name) {
+							err := tx.Exec(
+								fmt.Sprintf("ALTER TABLE nodes ADD COLUMN %s %s", col.name, col.typ),
+							).Error
+							if err != nil {
+								return fmt.Errorf("adding %s column: %w", col.name, err)
+							}
+						}
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Add tables for VPN provider account management and key allocations.
+				// vpn_provider_accounts stores provider credentials (e.g. Mullvad account numbers).
+				// vpn_key_allocations tracks which node has a WG key registered with which account.
+				// Provider relay servers are NOT stored in the database — they are cached in memory.
+				ID: "202603061500-add-vpn-provider-tables",
+				Migrate: func(tx *gorm.DB) error {
+					err := tx.Exec(`CREATE TABLE IF NOT EXISTS vpn_provider_accounts (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					provider_name TEXT NOT NULL,
+					account_id TEXT NOT NULL,
+					max_keys INTEGER NOT NULL DEFAULT 5,
+					expires_at DATETIME,
+					enabled NUMERIC NOT NULL DEFAULT true,
+					created_at DATETIME,
+					updated_at DATETIME,
+					UNIQUE(provider_name, account_id)
+				)`).Error
+					if err != nil {
+						return fmt.Errorf("creating vpn_provider_accounts table: %w", err)
+					}
+
+					err = tx.Exec(`CREATE TABLE IF NOT EXISTS vpn_key_allocations (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					account_id INTEGER NOT NULL REFERENCES vpn_provider_accounts(id) ON DELETE CASCADE,
+					node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+					node_key TEXT NOT NULL,
+					allocated_at DATETIME,
+					UNIQUE(account_id, node_key)
+				)`).Error
+					if err != nil {
+						return fmt.Errorf("creating vpn_key_allocations table: %w", err)
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Add assigned IP columns to vpn_key_allocations for masquerade support.
+				// Mullvad assigns each registered WG key an internal IP (e.g. 10.139.55.16)
+				// that must be used as the source address inside the WireGuard tunnel.
+				ID: "202603071500-add-vpn-allocation-assigned-ips",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`ALTER TABLE vpn_key_allocations ADD COLUMN assigned_ipv4 TEXT DEFAULT ''`).Error; err != nil {
+						return fmt.Errorf("adding assigned_ipv4 column: %w", err)
+					}
+
+					if err := tx.Exec(`ALTER TABLE vpn_key_allocations ADD COLUMN assigned_ipv6 TEXT DEFAULT ''`).Error; err != nil {
+						return fmt.Errorf("adding assigned_ipv6 column: %w", err)
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 

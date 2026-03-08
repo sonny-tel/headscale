@@ -89,12 +89,26 @@ CREATE TABLE nodes(
   expiry datetime,
   approved_routes text,
 
+  is_wireguard_only numeric NOT NULL DEFAULT false,
+  is_jailed numeric NOT NULL DEFAULT false,
+  exit_node_dns_resolvers text,
+
+  owner_node_id bigint,
+  location_country text,
+  location_country_code text,
+  location_city text,
+  location_city_code text,
+  location_latitude real,
+  location_longitude real,
+  location_priority integer DEFAULT 0,
+
   created_at datetime,
   updated_at datetime,
   deleted_at datetime,
 
   CONSTRAINT fk_nodes_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_nodes_auth_key FOREIGN KEY(auth_key_id) REFERENCES pre_auth_keys(id)
+  CONSTRAINT fk_nodes_auth_key FOREIGN KEY(auth_key_id) REFERENCES pre_auth_keys(id),
+  CONSTRAINT fk_nodes_owner FOREIGN KEY(owner_node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
 
 CREATE TABLE policies(
@@ -106,6 +120,31 @@ CREATE TABLE policies(
   deleted_at datetime
 );
 CREATE INDEX idx_policies_deleted_at ON policies(deleted_at);
+
+CREATE TABLE vpn_provider_accounts(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  provider_name text NOT NULL,
+  account_id text NOT NULL,
+  max_keys integer NOT NULL DEFAULT 5,
+  expires_at datetime,
+  enabled numeric NOT NULL DEFAULT true,
+  created_at datetime,
+  updated_at datetime,
+  UNIQUE(provider_name, account_id)
+);
+
+CREATE TABLE vpn_key_allocations(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  account_id integer NOT NULL,
+  node_id bigint NOT NULL,
+  node_key text NOT NULL,
+  assigned_ipv4 text DEFAULT '',
+  assigned_ipv6 text DEFAULT '',
+  allocated_at datetime,
+  UNIQUE(account_id, node_key),
+  CONSTRAINT fk_vpn_key_allocations_account FOREIGN KEY(account_id) REFERENCES vpn_provider_accounts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_vpn_key_allocations_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
 
 CREATE TABLE database_versions(
   id integer PRIMARY KEY,

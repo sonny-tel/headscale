@@ -36,6 +36,10 @@ type PolicyManager interface {
 	// NodeCanApproveRoute reports whether the given node can approve the given route.
 	NodeCanApproveRoute(node types.NodeView, route netip.Prefix) bool
 
+	// NodeAttrsForNode evaluates nodeAttrs rules and returns the attribute
+	// strings that apply to the given node.
+	NodeAttrsForNode(node types.NodeView) []string
+
 	Version() int
 	DebugString() string
 }

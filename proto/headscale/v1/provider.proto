@@ -1,0 +1,76 @@
+syntax = "proto3";
+package headscale.v1;
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
+
+import "google/protobuf/timestamp.proto";
+
+message ProviderAccount {
+  uint64 id = 1;
+  string provider_name = 2;
+  string account_id = 3;
+  int32 max_keys = 4;
+  int64 active_keys = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  bool enabled = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message KeyAllocation {
+  uint64 id = 1;
+  uint64 account_id = 2;
+  uint64 node_id = 3;
+  string node_key = 4;
+  google.protobuf.Timestamp allocated_at = 5;
+}
+
+message ProviderRelay {
+  string hostname = 1;
+  string provider_name = 2;
+  string country_code = 3;
+  string country = 4;
+  string city_code = 5;
+  string city = 6;
+  bool active = 7;
+}
+
+// --- Provider Account RPCs ---
+
+message AddProviderAccountRequest {
+  string provider_name = 1;
+  string account_id = 2;
+  int32 max_keys = 3;
+}
+
+message AddProviderAccountResponse { ProviderAccount account = 1; }
+
+message RemoveProviderAccountRequest { uint64 id = 1; }
+
+message RemoveProviderAccountResponse {}
+
+message ListProviderAccountsRequest { string provider_name = 1; }
+
+message ListProviderAccountsResponse {
+  repeated ProviderAccount accounts = 1;
+}
+
+// --- Relay RPCs ---
+
+message SyncProviderRelaysRequest { string provider_name = 1; }
+
+message SyncProviderRelaysResponse { int32 relay_count = 1; }
+
+message ListProviderRelaysRequest {
+  string provider_name = 1;
+  string country_code = 2;
+}
+
+message ListProviderRelaysResponse { repeated ProviderRelay relays = 1; }
+
+// --- Allocation RPCs ---
+
+message ListProviderAllocationsRequest { string provider_name = 1; }
+
+message ListProviderAllocationsResponse {
+  repeated KeyAllocation allocations = 1;
+}

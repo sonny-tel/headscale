@@ -774,6 +774,196 @@
         ]
       }
     },
+    "/api/v1/provider/account": {
+      "get": {
+        "operationId": "HeadscaleService_ListProviderAccounts",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListProviderAccountsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      },
+      "post": {
+        "summary": "--- Provider start ---",
+        "operationId": "HeadscaleService_AddProviderAccount",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AddProviderAccountResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1AddProviderAccountRequest"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/provider/account/{id}": {
+      "delete": {
+        "operationId": "HeadscaleService_RemoveProviderAccount",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RemoveProviderAccountResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/provider/allocation": {
+      "get": {
+        "operationId": "HeadscaleService_ListProviderAllocations",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListProviderAllocationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/provider/relay": {
+      "get": {
+        "operationId": "HeadscaleService_ListProviderRelays",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListProviderRelaysResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "providerName",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "countryCode",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/provider/relay/sync": {
+      "post": {
+        "operationId": "HeadscaleService_SyncProviderRelays",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SyncProviderRelaysResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SyncProviderRelaysRequest"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/user": {
       "get": {
         "operationId": "HeadscaleService_ListUsers",
@@ -965,6 +1155,29 @@
             "type": "object",
             "$ref": "#/definitions/protobufAny"
           }
+        }
+      }
+    },
+    "v1AddProviderAccountRequest": {
+      "type": "object",
+      "properties": {
+        "providerName": {
+          "type": "string"
+        },
+        "accountId": {
+          "type": "string"
+        },
+        "maxKeys": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1AddProviderAccountResponse": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "$ref": "#/definitions/v1ProviderAccount"
         }
       }
     },
@@ -1222,6 +1435,30 @@
         }
       }
     },
+    "v1KeyAllocation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "accountId": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "nodeId": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "nodeKey": {
+          "type": "string"
+        },
+        "allocatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "v1ListApiKeysResponse": {
       "type": "object",
       "properties": {
@@ -1254,6 +1491,42 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1PreAuthKey"
+          }
+        }
+      }
+    },
+    "v1ListProviderAccountsResponse": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ProviderAccount"
+          }
+        }
+      }
+    },
+    "v1ListProviderAllocationsResponse": {
+      "type": "object",
+      "properties": {
+        "allocations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1KeyAllocation"
+          }
+        }
+      }
+    },
+    "v1ListProviderRelaysResponse": {
+      "type": "object",
+      "properties": {
+        "relays": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ProviderRelay"
           }
         }
       }
@@ -1346,6 +1619,48 @@
           "items": {
             "type": "string"
           }
+        },
+        "isWireguardOnly": {
+          "type": "boolean"
+        },
+        "isJailed": {
+          "type": "boolean"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ownerNodeId": {
+          "type": "string",
+          "format": "uint64",
+          "description": "owner_node_id is the ID of the headscale node that owns this external peer.\nOnly set for WireGuard-only peers."
+        },
+        "locationCountry": {
+          "type": "string",
+          "description": "Location metadata for exit node picker UI grouping."
+        },
+        "locationCountryCode": {
+          "type": "string"
+        },
+        "locationCity": {
+          "type": "string"
+        },
+        "locationCityCode": {
+          "type": "string"
+        },
+        "locationLatitude": {
+          "type": "number",
+          "format": "double"
+        },
+        "locationLongitude": {
+          "type": "number",
+          "format": "double"
+        },
+        "locationPriority": {
+          "type": "integer",
+          "format": "int32"
         }
       }
     },
@@ -1387,13 +1702,78 @@
         }
       }
     },
+    "v1ProviderAccount": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "providerName": {
+          "type": "string"
+        },
+        "accountId": {
+          "type": "string"
+        },
+        "maxKeys": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "activeKeys": {
+          "type": "string",
+          "format": "int64"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1ProviderRelay": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "providerName": {
+          "type": "string"
+        },
+        "countryCode": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "cityCode": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
     "v1RegisterMethod": {
       "type": "string",
       "enum": [
         "REGISTER_METHOD_UNSPECIFIED",
         "REGISTER_METHOD_AUTH_KEY",
         "REGISTER_METHOD_CLI",
-        "REGISTER_METHOD_OIDC"
+        "REGISTER_METHOD_OIDC",
+        "REGISTER_METHOD_EXTERNAL"
       ],
       "default": "REGISTER_METHOD_UNSPECIFIED"
     },
@@ -1404,6 +1784,9 @@
           "$ref": "#/definitions/v1Node"
         }
       }
+    },
+    "v1RemoveProviderAccountResponse": {
+      "type": "object"
     },
     "v1RenameNodeResponse": {
       "type": "object",
@@ -1454,6 +1837,23 @@
       "properties": {
         "node": {
           "$ref": "#/definitions/v1Node"
+        }
+      }
+    },
+    "v1SyncProviderRelaysRequest": {
+      "type": "object",
+      "properties": {
+        "providerName": {
+          "type": "string"
+        }
+      }
+    },
+    "v1SyncProviderRelaysResponse": {
+      "type": "object",
+      "properties": {
+        "relayCount": {
+          "type": "integer",
+          "format": "int32"
         }
       }
     },

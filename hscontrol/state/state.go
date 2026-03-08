@@ -18,6 +18,7 @@ import (
 	hsdb "github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/policy"
 	"github.com/juanfont/headscale/hscontrol/policy/matcher"
+	"github.com/juanfont/headscale/hscontrol/provider"
 	"github.com/juanfont/headscale/hscontrol/routes"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/types/change"
@@ -117,6 +118,14 @@ type State struct {
 	// Ref: https://github.com/tailscale/tailscale/issues/7125
 	sshCheckAuth map[sshCheckPair]time.Time
 	sshCheckMu   sync.RWMutex
+
+	// providerMgr coordinates VPN provider relay caching and key allocation.
+	// May be nil if no provider accounts are configured.
+	providerMgr *provider.Manager
+
+	// providerMu serializes all provider reconciliation operations to prevent
+	// concurrent calls from racing on Mullvad API registrations.
+	providerMu sync.Mutex
 }
 
 // NewState creates and initializes a new State instance, setting up the database,
@@ -289,6 +298,10 @@ func (s *State) ReloadPolicy() ([]change.Change, error) {
 			Int("total.changes", len(cs)).
 			Msg("Policy reload completed with changes")
 	}
+
+	// Reconcile VPN provider key allocations after policy changes.
+	// nodeAttrs may have changed, adding or removing nodes from provider access.
+	s.ReconcileProviderAllocations(context.Background())
 
 	return cs, nil
 }
@@ -481,6 +494,9 @@ func (s *State) SaveNode(node types.NodeView) (types.NodeView, change.Change, er
 // DeleteNode permanently removes a node and cleans up associated resources.
 // Returns whether policies changed and any error. This operation is irreversible.
 func (s *State) DeleteNode(node types.NodeView) (change.Change, error) {
+	// Clean up provider key allocations before deleting the node.
+	s.deallocateProviderKeys(node)
+
 	s.nodeStore.DeleteNode(node.ID())
 
 	err := s.db.DeleteNode(node.AsStruct())
@@ -523,6 +539,11 @@ func (s *State) Connect(id types.NodeID) []change.Change {
 	c := []change.Change{change.NodeOnlineFor(node)}
 
 	log.Info().EmbedObject(node).Msg("node connected")
+
+	// Reconcile provider allocations for this node on connect.
+	// This ensures nodes that come online get provider keys without
+	// waiting for the periodic sync or manual trigger.
+	s.ReconcileProviderAllocationsForNode(context.Background(), node)
 
 	// Use the node's current routes for primary route update.
 	// AllApprovedRoutes() returns only the intersection of announced and approved routes.
@@ -932,6 +953,437 @@ func (s *State) MatchersForNode(node types.NodeView) ([]matcher.Match, error) {
 // NodeCanHaveTag checks if a node is allowed to have a specific tag.
 func (s *State) NodeCanHaveTag(node types.NodeView, tag string) bool {
 	return s.polMan.NodeCanHaveTag(node, tag)
+}
+
+// NodeAttrsForNode evaluates nodeAttrs rules and returns the attribute
+// strings that apply to the given node.
+func (s *State) NodeAttrsForNode(node types.NodeView) []string {
+	return s.polMan.NodeAttrsForNode(node)
+}
+
+// ProviderRelayNodes returns the synthetic tailcfg.Node entries for all
+// cached VPN provider relays. Returns nil if no provider manager is active.
+func (s *State) ProviderRelayNodes() []*tailcfg.Node {
+	if s.providerMgr == nil {
+		return nil
+	}
+
+	return s.providerMgr.Cache().AllTailNodes()
+}
+
+// ProviderMasqAddrsForNode returns the provider-assigned masquerade IPs for a node.
+// These are the internal IPs assigned by the VPN provider (e.g. Mullvad assigns
+// 10.x.x.x) that must be used as the source address inside the WG tunnel.
+// Returns zero-value addrs if no allocation exists.
+func (s *State) ProviderMasqAddrsForNode(nodeID types.NodeID) (v4, v6 netip.Addr) {
+	if s.providerMgr == nil {
+		return v4, v6
+	}
+
+	// Check all registered providers for allocations belonging to this node.
+	for _, provName := range provider.Registered() {
+		alloc, err := s.db.GetKeyAllocationForNode(nodeID.Uint64(), provName)
+		if err != nil || alloc == nil {
+			continue
+		}
+
+		if alloc.AssignedIPv4 != "" {
+			if parsed, err := netip.ParseAddr(alloc.AssignedIPv4); err == nil {
+				v4 = parsed
+			}
+		}
+
+		if alloc.AssignedIPv6 != "" {
+			if parsed, err := netip.ParseAddr(alloc.AssignedIPv6); err == nil {
+				v6 = parsed
+			}
+		}
+
+		// Use first found allocation.
+		if v4.IsValid() || v6.IsValid() {
+			return v4, v6
+		}
+	}
+
+	return v4, v6
+}
+
+// ProviderManager returns the provider manager, or nil if not configured.
+func (s *State) ProviderManager() *provider.Manager {
+	return s.providerMgr
+}
+
+// SetProviderManager sets the VPN provider manager on the state.
+func (s *State) SetProviderManager(mgr *provider.Manager) {
+	s.providerMgr = mgr
+}
+
+// SyncProviderRelays fetches relays from the named provider and updates the cache.
+func (s *State) SyncProviderRelays(ctx context.Context, providerName string) error {
+	if s.providerMgr == nil {
+		return fmt.Errorf("no provider manager configured")
+	}
+
+	return s.providerMgr.SyncRelays(ctx, providerName)
+}
+
+// ReconcileProviderAllocations evaluates nodeAttrs for all nodes and ensures
+// provider key allocations match the desired state. Called after policy reload
+// and during periodic sync.
+func (s *State) ReconcileProviderAllocations(ctx context.Context) {
+	if s.providerMgr == nil {
+		return
+	}
+
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+
+	nodes := s.ListNodes()
+	infos := make([]provider.NodeInfo, 0, nodes.Len())
+
+	for _, nv := range nodes.All() {
+		attrs := s.polMan.NodeAttrsForNode(nv)
+		infos = append(infos, provider.NodeInfo{
+			ID:     nv.ID().Uint64(),
+			PubKey: nv.NodeKey(),
+			Attrs:  attrs,
+		})
+
+		log.Debug().
+			Uint64("node_id", nv.ID().Uint64()).
+			Str("hostname", nv.Hostname()).
+			Str("node_key", nv.NodeKey().ShortString()).
+			Strs("attrs", attrs).
+			Msg("provider reconciliation: node info")
+	}
+
+	log.Info().
+		Int("node_count", len(infos)).
+		Msg("provider reconciliation: starting for all nodes")
+
+	findAccount := func(providerName string) (uint, string, error) {
+		acct, err := s.db.FindAccountWithFreeSlot(providerName)
+		if err != nil {
+			return 0, "", err
+		}
+
+		if acct == nil {
+			return 0, "", fmt.Errorf("no account with free slots for provider %q", providerName)
+		}
+
+		return acct.ID, acct.AccountID, nil
+	}
+
+	getAlloc := func(nodeID uint64, providerName string) (bool, uint, string, string, error) {
+		alloc, err := s.db.GetKeyAllocationForNode(nodeID, providerName)
+		if err != nil {
+			return false, 0, "", "", nil //nolint:nilerr // not found is not an error
+		}
+
+		return true, alloc.AccountID, alloc.NodeKey, alloc.Account.AccountID, nil
+	}
+
+	createAlloc := func(accountID uint, nodeID uint64, nodeKey, assignedIPv4, assignedIPv6 string) error {
+		_, err := s.db.CreateKeyAllocation(nil, accountID, nodeID, nodeKey, assignedIPv4, assignedIPv6)
+
+		return err
+	}
+
+	deleteAlloc := func(nodeID uint64, providerName string) error {
+		return s.db.DeleteKeyAllocationByNodeAndProvider(nil, nodeID, providerName)
+	}
+
+	if err := s.providerMgr.ReconcileForNodes(ctx, infos, findAccount, getAlloc, createAlloc, deleteAlloc); err != nil {
+		log.Error().Err(err).Msg("provider allocation reconciliation failed")
+	}
+}
+
+// ReconcileProviderAllocationsForNode reconciles provider key allocations for a
+// single node. Used when a node connects or re-registers to ensure it has the
+// correct provider keys without iterating over all nodes.
+func (s *State) ReconcileProviderAllocationsForNode(ctx context.Context, nv types.NodeView) {
+	if s.providerMgr == nil {
+		return
+	}
+
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+
+	if !nv.Valid() {
+		return
+	}
+
+	info := provider.NodeInfo{
+		ID:     nv.ID().Uint64(),
+		PubKey: nv.NodeKey(),
+		Attrs:  s.polMan.NodeAttrsForNode(nv),
+	}
+
+	findAccount := func(providerName string) (uint, string, error) {
+		acct, err := s.db.FindAccountWithFreeSlot(providerName)
+		if err != nil {
+			return 0, "", err
+		}
+
+		if acct == nil {
+			return 0, "", fmt.Errorf("no account with free slots for provider %q", providerName)
+		}
+
+		return acct.ID, acct.AccountID, nil
+	}
+
+	getAlloc := func(nodeID uint64, providerName string) (bool, uint, string, string, error) {
+		alloc, err := s.db.GetKeyAllocationForNode(nodeID, providerName)
+		if err != nil {
+			return false, 0, "", "", nil //nolint:nilerr // not found is not an error
+		}
+
+		return true, alloc.AccountID, alloc.NodeKey, alloc.Account.AccountID, nil
+	}
+
+	createAlloc := func(accountID uint, nodeID uint64, nodeKey, assignedIPv4, assignedIPv6 string) error {
+		_, err := s.db.CreateKeyAllocation(nil, accountID, nodeID, nodeKey, assignedIPv4, assignedIPv6)
+
+		return err
+	}
+
+	deleteAlloc := func(nodeID uint64, providerName string) error {
+		return s.db.DeleteKeyAllocationByNodeAndProvider(nil, nodeID, providerName)
+	}
+
+	if err := s.providerMgr.ReconcileForNodes(ctx, []provider.NodeInfo{info}, findAccount, getAlloc, createAlloc, deleteAlloc); err != nil {
+		log.Error().Err(err).EmbedObject(nv).Msg("provider allocation reconciliation failed for node")
+	}
+}
+
+// VerifyProviderAllocations checks each existing DB allocation against the
+// provider API to confirm the key is still registered. Allocations whose keys
+// are no longer on the provider are deleted from the DB so the subsequent
+// reconciliation will re-register them. This is called at startup to handle
+// cases where keys were removed externally (e.g. manual cleanup on the
+// provider website, or orphaned deregistration from a previous run).
+func (s *State) VerifyProviderAllocations(ctx context.Context) {
+	if s.providerMgr == nil {
+		return
+	}
+
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+
+	allocs, err := s.db.ListKeyAllocations("")
+	if err != nil {
+		log.Error().Err(err).Msg("failed to list allocations for startup verification")
+
+		return
+	}
+
+	if len(allocs) == 0 {
+		log.Info().Msg("no provider allocations to verify at startup")
+
+		return
+	}
+
+	var verified, removed int
+
+	for _, alloc := range allocs {
+		p, ok := s.providerMgr.Provider(alloc.Account.ProviderName)
+		if !ok {
+			// Provider not registered — remove stale DB record.
+			if err := s.db.DeleteKeyAllocation(nil, alloc.ID); err != nil {
+				log.Warn().Err(err).
+					Uint64("node_id", alloc.NodeID).
+					Msg("failed to delete allocation for unknown provider")
+			}
+
+			removed++
+
+			continue
+		}
+
+		var nodeKey key.NodePublic
+		if err := nodeKey.UnmarshalText([]byte(alloc.NodeKey)); err != nil {
+			log.Warn().Err(err).
+				Uint64("node_id", alloc.NodeID).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to parse stored key for verification, removing DB record")
+
+			_ = s.db.DeleteKeyAllocation(nil, alloc.ID)
+			removed++
+
+			continue
+		}
+
+		// Check if the key is still registered on the provider.
+		_, getErr := p.GetKey(ctx, alloc.Account.AccountID, nodeKey)
+		if getErr != nil {
+			// Key is not on provider (404) or API error — remove DB allocation
+			// so the reconciliation will re-register it.
+			log.Info().
+				Uint64("node_id", alloc.NodeID).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("provider key no longer valid, removing stale DB allocation")
+
+			if err := s.db.DeleteKeyAllocation(nil, alloc.ID); err != nil {
+				log.Error().Err(err).
+					Uint64("node_id", alloc.NodeID).
+					Msg("failed to delete stale allocation")
+			}
+
+			removed++
+
+			continue
+		}
+
+		verified++
+	}
+
+	log.Info().
+		Int("total", len(allocs)).
+		Int("verified", verified).
+		Int("removed", removed).
+		Msg("startup provider allocation verification complete")
+}
+
+// FlushAndDeregisterAllAllocations deregisters all provider keys from their
+// respective provider APIs and deletes all allocation records from the database.
+// This is used at startup to ensure a clean slate — any orphaned keys from
+// previous runs (crashed mid-rotation, failed deregistrations, etc.) are cleaned up.
+func (s *State) FlushAndDeregisterAllAllocations(ctx context.Context) {
+	if s.providerMgr == nil {
+		return
+	}
+
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+
+	// List all allocations first WITHOUT deleting from DB.
+	// We deregister from the provider API first, then delete the DB record.
+	// This prevents losing track of keys if deregistration fails.
+	allocs, err := s.db.ListKeyAllocations("")
+	if err != nil {
+		log.Error().Err(err).Msg("failed to list provider allocations for startup flush")
+
+		return
+	}
+
+	if len(allocs) == 0 {
+		log.Info().Msg("no provider allocations to flush at startup")
+
+		return
+	}
+
+	var flushed int
+
+	for _, alloc := range allocs {
+		p, ok := s.providerMgr.Provider(alloc.Account.ProviderName)
+		if !ok {
+			// Provider not registered — just remove the DB record.
+			if err := s.db.DeleteKeyAllocation(nil, alloc.ID); err != nil {
+				log.Warn().Err(err).
+					Uint64("node_id", alloc.NodeID).
+					Msg("failed to delete orphaned allocation for unknown provider")
+			}
+
+			flushed++
+
+			continue
+		}
+
+		var nodeKey key.NodePublic
+		if err := nodeKey.UnmarshalText([]byte(alloc.NodeKey)); err != nil {
+			log.Warn().Err(err).
+				Uint64("node_id", alloc.NodeID).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to parse stored key for startup deregistration, removing DB record")
+
+			_ = s.db.DeleteKeyAllocation(nil, alloc.ID)
+			flushed++
+
+			continue
+		}
+
+		// Deregister from provider API FIRST.
+		if err := p.DeregisterKey(ctx, alloc.Account.AccountID, nodeKey); err != nil {
+			log.Warn().Err(err).
+				Uint64("node_id", alloc.NodeID).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to deregister key during startup flush, keeping DB record for retry")
+
+			// Don't delete DB record — we'll retry on next startup.
+			continue
+		}
+
+		// Deregistration succeeded — now safe to remove DB record.
+		if err := s.db.DeleteKeyAllocation(nil, alloc.ID); err != nil {
+			log.Error().Err(err).
+				Uint64("node_id", alloc.NodeID).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to delete allocation record after successful deregistration")
+
+			continue
+		}
+
+		flushed++
+	}
+
+	log.Info().
+		Int("total", len(allocs)).
+		Int("flushed", flushed).
+		Msg("startup provider allocation flush complete")
+}
+
+// deallocateProviderKeys deregisters and removes all provider key allocations
+// for a node being deleted. This is called before the node is removed from the
+// store and database so we can still look up allocations.
+func (s *State) deallocateProviderKeys(node types.NodeView) {
+	if s.providerMgr == nil {
+		return
+	}
+
+	allocs, err := s.db.ListKeyAllocationsForNode(node.ID().Uint64())
+	if err != nil {
+		log.Error().Err(err).
+			EmbedObject(node).
+			Msg("failed to list provider allocations for node deletion")
+
+		return
+	}
+
+	for _, alloc := range allocs {
+		p, ok := s.providerMgr.Provider(alloc.Account.ProviderName)
+		if !ok {
+			continue
+		}
+
+		var nodeKey key.NodePublic
+		if err := nodeKey.UnmarshalText([]byte(alloc.NodeKey)); err != nil {
+			log.Error().Err(err).
+				EmbedObject(node).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to parse stored node key for deregistration")
+
+			continue
+		}
+
+		if err := p.DeregisterKey(context.Background(), alloc.Account.AccountID, nodeKey); err != nil {
+			log.Error().Err(err).
+				EmbedObject(node).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to deregister key with provider during node deletion")
+		}
+
+		if err := s.db.DeleteKeyAllocation(nil, alloc.ID); err != nil {
+			log.Error().Err(err).
+				EmbedObject(node).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("failed to delete allocation record during node deletion")
+		} else {
+			log.Info().
+				EmbedObject(node).
+				Str("provider", alloc.Account.ProviderName).
+				Msg("deallocated provider key for deleted node")
+		}
+	}
 }
 
 // SetPolicy updates the policy configuration.

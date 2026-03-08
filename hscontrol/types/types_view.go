@@ -16,6 +16,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 	"tailscale.com/types/views"
 )
@@ -258,33 +259,76 @@ func (v NodeView) DeletedAt() views.ValuePointer[time.Time] {
 
 func (v NodeView) IsOnline() views.ValuePointer[bool] { return views.ValuePointerOf(v.ж.IsOnline) }
 
-func (v NodeView) String() string { return v.ж.String() }
+// IsWireGuardOnly indicates that this is an external (non-Tailscale) WireGuard peer.
+// It does not speak Disco or DERP, and must have Endpoints in order to be reachable.
+// Its DiscoKey and MachineKey will be zero values.
+func (v NodeView) IsWireGuardOnly() bool { return v.ж.IsWireGuardOnly }
+
+// IsJailed indicates that this node is jailed: it cannot initiate connections
+// into the tailnet, but other nodes can still connect to it.
+func (v NodeView) IsJailed() bool { return v.ж.IsJailed }
+
+// ExitNodeDNSResolvers is the list of DNS servers that should be used when this
+// WireGuard-only node is used as an exit node.
+func (v NodeView) ExitNodeDNSResolvers() views.SliceView[*dnstype.Resolver, dnstype.ResolverView] {
+	return views.SliceOfViews[*dnstype.Resolver, dnstype.ResolverView](v.ж.ExitNodeDNSResolvers)
+}
+
+// OwnerNodeID is the ID of the headscale node that owns this external peer.
+// Only set for WireGuard-only peers. The external peer is only visible in
+// the owner's MapResponse. ON DELETE CASCADE removes external peers when the
+// owner is deleted.
+func (v NodeView) OwnerNodeID() views.ValuePointer[NodeID] {
+	return views.ValuePointerOf(v.ж.OwnerNodeID)
+}
+
+// Location fields for exit node picker UI grouping.
+// Only relevant for WireGuard-only peers used as exit nodes.
+func (v NodeView) LocationCountry() string     { return v.ж.LocationCountry }
+func (v NodeView) LocationCountryCode() string { return v.ж.LocationCountryCode }
+func (v NodeView) LocationCity() string        { return v.ж.LocationCity }
+func (v NodeView) LocationCityCode() string    { return v.ж.LocationCityCode }
+func (v NodeView) LocationLatitude() float64   { return v.ж.LocationLatitude }
+func (v NodeView) LocationLongitude() float64  { return v.ж.LocationLongitude }
+func (v NodeView) LocationPriority() int       { return v.ж.LocationPriority }
+func (v NodeView) String() string              { return v.ж.String() }
 
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _NodeViewNeedsRegeneration = Node(struct {
-	ID             NodeID
-	MachineKey     key.MachinePublic
-	NodeKey        key.NodePublic
-	DiscoKey       key.DiscoPublic
-	Endpoints      []netip.AddrPort
-	Hostinfo       *tailcfg.Hostinfo
-	IPv4           *netip.Addr
-	IPv6           *netip.Addr
-	Hostname       string
-	GivenName      string
-	UserID         *uint
-	User           *User
-	RegisterMethod string
-	Tags           []string
-	AuthKeyID      *uint64
-	AuthKey        *PreAuthKey
-	Expiry         *time.Time
-	LastSeen       *time.Time
-	ApprovedRoutes []netip.Prefix
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time
-	IsOnline       *bool
+	ID                   NodeID
+	MachineKey           key.MachinePublic
+	NodeKey              key.NodePublic
+	DiscoKey             key.DiscoPublic
+	Endpoints            []netip.AddrPort
+	Hostinfo             *tailcfg.Hostinfo
+	IPv4                 *netip.Addr
+	IPv6                 *netip.Addr
+	Hostname             string
+	GivenName            string
+	UserID               *uint
+	User                 *User
+	RegisterMethod       string
+	Tags                 []string
+	AuthKeyID            *uint64
+	AuthKey              *PreAuthKey
+	Expiry               *time.Time
+	LastSeen             *time.Time
+	ApprovedRoutes       []netip.Prefix
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	DeletedAt            *time.Time
+	IsOnline             *bool
+	IsWireGuardOnly      bool
+	IsJailed             bool
+	ExitNodeDNSResolvers []*dnstype.Resolver
+	OwnerNodeID          *NodeID
+	LocationCountry      string
+	LocationCountryCode  string
+	LocationCity         string
+	LocationCityCode     string
+	LocationLatitude     float64
+	LocationLongitude    float64
+	LocationPriority     int
 }{})
 
 // View returns a read-only view of PreAuthKey.

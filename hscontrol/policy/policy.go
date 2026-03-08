@@ -67,9 +67,12 @@ func BuildPeerMap(
 				continue
 			}
 
-			if nodes.At(i).CanAccess(matchers, nodes.At(j)) || nodes.At(j).CanAccess(matchers, nodes.At(i)) {
-				ret[nodes.At(i).ID()] = append(ret[nodes.At(i).ID()], nodes.At(j))
-				ret[nodes.At(j).ID()] = append(ret[nodes.At(j).ID()], nodes.At(i))
+			ni := nodes.At(i)
+			nj := nodes.At(j)
+
+			if ni.CanAccess(matchers, nj) || nj.CanAccess(matchers, ni) {
+				ret[ni.ID()] = append(ret[ni.ID()], nj)
+				ret[nj.ID()] = append(ret[nj.ID()], ni)
 			}
 		}
 	}
