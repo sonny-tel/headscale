@@ -296,7 +296,23 @@ func IsCI() bool {
 //
 // Returns the guaranteed-valid hostname to use.
 func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) string {
-	if !hostinfo.Valid() || hostinfo.Hostname() == "" {
+	hostname := ""
+	if hostinfo.Valid() {
+		hostname = strings.ToLower(hostinfo.Hostname())
+	}
+
+	// Mobile devices often report empty or generic hostnames (e.g. "localhost").
+	// Fall back to DeviceModel which contains the actual device name (e.g. "Pixel 7a").
+	if hostname == "" || IsGenericHostname(hostname) {
+		if hostinfo.Valid() {
+			if name := hostnameFromDeviceModel(hostinfo); name != "" {
+				return name
+			}
+		}
+	}
+
+	// No usable hostname at all — generate from keys.
+	if hostname == "" {
 		key := cmp.Or(machineKey, nodeKey)
 		if key == "" {
 			return "unknown-node"
@@ -310,14 +326,40 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 		return "node-" + keyPrefix
 	}
 
-	lowercased := strings.ToLower(hostinfo.Hostname())
-
-	err := ValidateHostname(lowercased)
-	if err == nil {
-		return lowercased
+	if err := ValidateHostname(hostname); err == nil {
+		return hostname
 	}
 
 	return InvalidString()
+}
+
+// IsGenericHostname returns true for hostnames that are OS defaults and
+// not meaningful as device identifiers.
+func IsGenericHostname(hostname string) bool {
+	switch hostname {
+	case "localhost", "android", "iphone", "ipad":
+		return true
+	}
+	return strings.HasPrefix(hostname, "android-")
+}
+
+// hostnameFromDeviceModel attempts to derive a valid DNS hostname from the
+// Hostinfo DeviceModel field (e.g. "Pixel 7a" → "pixel-7a").
+func hostnameFromDeviceModel(hostinfo tailcfg.HostinfoView) string {
+	model := hostinfo.DeviceModel()
+	if model == "" {
+		return ""
+	}
+
+	// Replace spaces with hyphens before NormaliseHostname strips them.
+	model = strings.ReplaceAll(model, " ", "-")
+
+	name, err := NormaliseHostname(model)
+	if err != nil {
+		return ""
+	}
+
+	return name
 }
 
 // GenerateRegistrationKey generates a vanity key for tracking web authentication

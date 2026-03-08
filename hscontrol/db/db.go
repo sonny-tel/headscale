@@ -853,6 +853,29 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				// Remove the owner_node_id column from nodes table if it exists.
+				// This column was added by a previous development build via AutoMigrate
+				// but is no longer part of the Node struct.
+				ID: "202603081200-drop-owner-node-id",
+				Migrate: func(tx *gorm.DB) error {
+					// Check if the column exists before attempting to drop it.
+					// This migration is a no-op on fresh databases.
+					var count int64
+					tx.Raw("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name = 'owner_node_id'").Scan(&count)
+					if count == 0 {
+						return nil
+					}
+
+					err := tx.Exec(`ALTER TABLE nodes DROP COLUMN owner_node_id`).Error
+					if err != nil {
+						return fmt.Errorf("dropping owner_node_id column: %w", err)
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 

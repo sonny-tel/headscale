@@ -12,6 +12,9 @@
 #
 server_url: http://127.0.0.1:8080
 
+# The display name of the tailnet, which is shown in the Tailscale client UI. If not set, it defaults to the server_url.
+tailnet_display_name: "My Tailnet"
+
 # Address to listen to / bind to on the server
 #
 # For production:

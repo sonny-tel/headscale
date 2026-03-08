@@ -1,6 +1,7 @@
 package types
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -688,7 +689,11 @@ func (node *Node) ApplyHostnameFromHostInfo(hostInfo *tailcfg.Hostinfo) {
 		return
 	}
 
-	newHostname := strings.ToLower(hostInfo.Hostname)
+	newHostname := util.EnsureHostname(
+		hostInfo.View(),
+		node.MachineKey.String(),
+		node.NodeKey.String(),
+	)
 
 	err := util.ValidateHostname(newHostname)
 	if err != nil {
@@ -699,6 +704,13 @@ func (node *Node) ApplyHostnameFromHostInfo(hostInfo *tailcfg.Hostinfo) {
 			Err(err).
 			Msg("Rejecting invalid hostname update from hostinfo")
 
+		return
+	}
+
+	// Don't downgrade a meaningful hostname to a generic one.
+	// If the current hostname is derived from DeviceModel (e.g. "pixel-7a")
+	// and the client keeps sending "localhost", keep the current hostname.
+	if util.IsGenericHostname(newHostname) && !util.IsGenericHostname(node.Hostname) {
 		return
 	}
 
@@ -1193,6 +1205,13 @@ func (nv NodeView) TailNode(
 
 	// Enable the suggested exit node UI for all nodes.
 	capMap[tailcfg.NodeAttrSuggestExitNodeUI] = []tailcfg.RawMessage{}
+
+	// Set the tailnet display name so clients show it in the UI.
+	if name := cmp.Or(cfg.TailnetDisplayName, cfg.Domain()); name != "" {
+		capMap[tailcfg.NodeAttrTailnetDisplayName] = []tailcfg.RawMessage{
+			tailcfg.RawMessage(`"` + name + `"`),
+		}
+	}
 
 	// Inject policy-driven node attributes into the CapMap.
 	for _, attr := range nodeAttrs {

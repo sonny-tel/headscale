@@ -437,6 +437,11 @@ func (api headscaleV1APIServer) DeleteNode(
 		return nil, status.Errorf(codes.NotFound, "node not found")
 	}
 
+	log.Warn().
+		EmbedObject(node).
+		Uint64("requested_node_id", request.GetNodeId()).
+		Msg("gRPC DeleteNode called — node will be deleted")
+
 	nodeChange, err := api.h.state.DeleteNode(node)
 	if err != nil {
 		return nil, err

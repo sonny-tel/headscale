@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
@@ -38,15 +39,40 @@ func (h *Headscale) handleRegister(
 			Str("node.key", req.NodeKey.ShortString()).
 			Time("expiry", req.Expiry).
 			Bool("has_auth", req.Auth != nil).
-			Msg("Detected logout attempt with past expiry")
+			Msg("Detected register request with past expiry")
 
-		// This is a logout attempt (expiry in the past)
 		if node, ok := h.state.GetNodeByNodeKey(req.NodeKey); ok {
+			if node.MachineKey() != machineKey {
+				return nil, NewHTTPError(http.StatusUnauthorized, "machine key mismatch", nil)
+			}
+
+			// If the node is already expired, the client is echoing stale logout
+			// state (e.g. the time.Unix(123,0) logout marker from a previous
+			// session). Clear the stale expiry and allow reconnection rather than
+			// perpetuating a re-auth loop.
+			if node.IsExpired() {
+				log.Info().
+					EmbedObject(node).
+					Time("stale_expiry", node.Expiry().Get()).
+					Time("req_expiry", req.Expiry).
+					Msg("Clearing stale expiry on node with past expiry in register request")
+
+				updatedNode, c, err := h.state.SetNodeExpiry(node.ID(), nil)
+				if err != nil {
+					return nil, fmt.Errorf("clearing stale node expiry: %w", err)
+				}
+
+				h.Change(c)
+
+				return nodeToRegisterResponse(updatedNode), nil
+			}
+
+			// Node is NOT expired — this is a fresh logout request.
 			log.Debug().
 				EmbedObject(node).
 				Bool("is_ephemeral", node.IsEphemeral()).
 				Bool("has_authkey", node.AuthKey().Valid()).
-				Msg("Found existing node for logout, calling handleLogout")
+				Msg("Found non-expired node for logout, calling handleLogout")
 
 			resp, err := h.handleLogout(node, req, machineKey)
 			if err != nil {
@@ -57,9 +83,9 @@ func (h *Headscale) handleRegister(
 				return resp, nil
 			}
 		} else {
-			log.Warn().
+			log.Debug().
 				Str("node.key", req.NodeKey.ShortString()).
-				Msg("Logout attempt but node not found in NodeStore")
+				Msg("Past expiry request but node not found by NodeKey, falling through")
 		}
 	}
 
@@ -86,6 +112,26 @@ func (h *Headscale) handleRegister(
 				return nodeToRegisterResponse(node), nil
 			}
 
+			// If the client sends Expiry=zero but the node has a stale past expiry
+			// (e.g. epoch time from a previous logout), the client is reconnecting
+			// after having already re-authenticated. Clear the stale expiry and
+			// allow the reconnection instead of forcing another re-auth loop.
+			if req.Expiry.IsZero() && node.IsExpired() {
+				log.Info().
+					EmbedObject(node).
+					Time("stale_expiry", node.Expiry().Get()).
+					Msg("Clearing stale expiry on reconnecting node")
+
+				updatedNode, c, err := h.state.SetNodeExpiry(node.ID(), nil)
+				if err != nil {
+					return nil, fmt.Errorf("clearing stale node expiry: %w", err)
+				}
+
+				h.Change(c)
+
+				return nodeToRegisterResponse(updatedNode), nil
+			}
+
 			resp, err := h.handleLogout(node, req, machineKey)
 			if err != nil {
 				return nil, fmt.Errorf("handling existing node: %w", err)
@@ -96,6 +142,44 @@ func (h *Headscale) handleRegister(
 			if resp != nil {
 				return resp, nil
 			}
+		} else if !req.OldNodeKey.IsZero() {
+			// The client rotated its NodeKey (e.g. because it thought the key was expired).
+			// The new NodeKey isn't in the store, but the old one might be.
+			// Look up the node by OldNodeKey, update the key, and allow reconnection.
+			if node, ok := h.state.GetNodeByNodeKey(req.OldNodeKey); ok {
+				if node.MachineKey() != machineKey {
+					return nil, NewHTTPError(http.StatusUnauthorized, "machine key mismatch on node key rotation", nil)
+				}
+
+				log.Info().
+					EmbedObject(node).
+					Str("old_node_key", req.OldNodeKey.ShortString()).
+					Str("new_node_key", req.NodeKey.ShortString()).
+					Msg("Node key rotation on reconnect, updating key and clearing expiry")
+
+				updatedNode, ok := h.state.NodeStoreUpdateNode(node.ID(), func(n *types.Node) {
+					n.NodeKey = req.NodeKey
+					n.Expiry = nil
+				})
+				if !ok {
+					return nil, fmt.Errorf("failed to update node key in store")
+				}
+
+				if err := h.state.PersistNodeKeyAndExpiry(node.ID(), req.NodeKey, nil); err != nil {
+					return nil, fmt.Errorf("persisting node key rotation: %w", err)
+				}
+
+				c := change.NodeAdded(node.ID())
+				h.Change(c)
+
+				return nodeToRegisterResponse(updatedNode), nil
+			}
+
+			log.Debug().
+				Str("node.key", req.NodeKey.ShortString()).
+				Str("old_node.key", req.OldNodeKey.ShortString()).
+				Str("machine.key", machineKey.ShortString()).
+				Msg("Node key rotation but old key not found either")
 		} else {
 			// If the register request is not attempting to register a node, and
 			// we cannot match it with an existing node, we consider that unexpected
@@ -159,21 +243,24 @@ func (h *Headscale) handleLogout(
 	// A past expiry indicates logout, regardless of whether Auth is present.
 	// The expiry check below will handle the logout logic.
 
-	// If the node is expired and this is not a re-authentication attempt,
-	// force the client to re-authenticate.
-	// TODO(kradalby): I wonder if this is a path we ever hit?
+	// If the node is already expired, clear the stale expiry and allow
+	// reconnection rather than forcing re-authentication. handleRegister
+	// handles most stale-expiry cases before calling us, but this covers
+	// edge cases (e.g. legacy paths).
 	if node.IsExpired() {
-		log.Trace().
+		log.Info().
 			EmbedObject(node).
-			Interface("reg.req", req).
-			Bool("unexpected", true).
-			Msg("Node key expired, forcing re-authentication")
+			Time("stale_expiry", node.Expiry().Get()).
+			Msg("Clearing stale expiry in handleLogout for already-expired node")
 
-		return &tailcfg.RegisterResponse{
-			NodeKeyExpired:    true,
-			MachineAuthorized: false,
-			AuthURL:           "", // Client will need to re-authenticate
-		}, nil
+		updatedNode, c, err := h.state.SetNodeExpiry(node.ID(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("clearing stale node expiry in handleLogout: %w", err)
+		}
+
+		h.Change(c)
+
+		return nodeToRegisterResponse(updatedNode), nil
 	}
 
 	// If we get here, the node is not currently expired, and not trying to

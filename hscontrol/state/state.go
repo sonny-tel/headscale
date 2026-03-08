@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,9 @@ import (
 const (
 	// registerCacheExpiration defines how long node registration entries remain in cache.
 	registerCacheExpiration = time.Minute * 15
+	// providerConnectReconcileTimeout bounds provider API work triggered by node connect
+	// so initial peer sync is not blocked by external network latency.
+	providerConnectReconcileTimeout = 10 * time.Second
 
 	// registerCacheCleanup defines the interval for cleaning up expired cache entries.
 	registerCacheCleanup = time.Minute * 20
@@ -494,6 +498,11 @@ func (s *State) SaveNode(node types.NodeView) (types.NodeView, change.Change, er
 // DeleteNode permanently removes a node and cleans up associated resources.
 // Returns whether policies changed and any error. This operation is irreversible.
 func (s *State) DeleteNode(node types.NodeView) (change.Change, error) {
+	log.Warn().
+		EmbedObject(node).
+		Str("stack_trace", string(debug.Stack())).
+		Msg("DeleteNode called — tracing caller")
+
 	// Clean up provider key allocations before deleting the node.
 	s.deallocateProviderKeys(node)
 
@@ -540,10 +549,14 @@ func (s *State) Connect(id types.NodeID) []change.Change {
 
 	log.Info().EmbedObject(node).Msg("node connected")
 
-	// Reconcile provider allocations for this node on connect.
-	// This ensures nodes that come online get provider keys without
-	// waiting for the periodic sync or manual trigger.
-	s.ReconcileProviderAllocationsForNode(context.Background(), node)
+	// Reconcile provider allocations for this node on connect, but do it in the
+	// background so external provider API latency does not block initial peer sync.
+	go func(node types.NodeView) {
+		ctx, cancel := context.WithTimeout(context.Background(), providerConnectReconcileTimeout)
+		defer cancel()
+
+		s.ReconcileProviderAllocationsForNode(ctx, node)
+	}(node)
 
 	// Use the node's current routes for primary route update.
 	// AllApprovedRoutes() returns only the intersection of announced and approved routes.
@@ -726,6 +739,32 @@ func (s *State) SetNodeExpiry(nodeID types.NodeID, expiry *time.Time) (types.Nod
 	}
 
 	return n, c, nil
+}
+
+// NodeStoreUpdateNode exposes nodeStore.UpdateNode for callers that need to
+// mutate a node in the in-memory store without going through a full persist.
+func (s *State) NodeStoreUpdateNode(nodeID types.NodeID, updateFn func(n *types.Node)) (types.NodeView, bool) {
+	return s.nodeStore.UpdateNode(nodeID, updateFn)
+}
+
+// PersistNodeKeyAndExpiry writes the NodeKey and Expiry for a node directly to
+// the database. This is used during NodeKey rotation where persistNodeToDB's
+// Omit("expiry") would prevent the expiry change from being saved.
+func (s *State) PersistNodeKeyAndExpiry(nodeID types.NodeID, nodeKey key.NodePublic, expiry *time.Time) error {
+	return s.db.Write(func(tx *gorm.DB) error {
+		node := &types.Node{}
+		node.ID = nodeID
+
+		if err := hsdb.NodeSetNodeKey(tx, node, nodeKey); err != nil {
+			return fmt.Errorf("setting node key: %w", err)
+		}
+
+		if err := tx.Model(node).Update("expiry", expiry).Error; err != nil {
+			return fmt.Errorf("setting expiry: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // SetNodeTags assigns tags to a node, making it a "tagged node".
@@ -1673,6 +1712,9 @@ type authNodeUpdateParams struct {
 	RegisterMethod string
 	// Set true for tagged->user conversion. Affects RegisterMethod and expiry.
 	IsConvertFromTag bool
+	// Set true when reclaiming an expired node with a new machine key.
+	// Causes the MachineKey to be updated on the existing node.
+	IsReclaimWithNewMachineKey bool
 }
 
 // applyAuthNodeUpdate applies common update logic for re-authenticating or converting
@@ -1715,6 +1757,12 @@ func (s *State) applyAuthNodeUpdate(params authNodeUpdateParams) (types.NodeView
 
 	// Update existing node in NodeStore - validation passed, safe to mutate
 	updatedNodeView, ok := s.nodeStore.UpdateNode(params.ExistingNode.ID(), func(node *types.Node) {
+		// Update MachineKey when reclaiming an expired node that re-authenticated
+		// with a new machine key (e.g., after tailscale logout + tailscale up).
+		if params.IsReclaimWithNewMachineKey {
+			node.MachineKey = regNv.MachineKey()
+		}
+
 		node.NodeKey = regNv.NodeKey()
 		node.DiscoKey = regNv.DiscoKey()
 		node.Hostname = params.Hostname
@@ -2058,6 +2106,23 @@ func (s *State) processReauthTags(
 	return nil
 }
 
+// findExpiredNodeByHostname searches for an expired, non-tagged node belonging
+// to the given user with a matching hostname. This is used as a fallback when
+// machine key lookup fails (e.g., after a tailscale logout + re-login cycle
+// that generates a new machine key). Only expired nodes are candidates to
+// avoid accidentally hijacking an active node.
+func (s *State) findExpiredNodeByHostname(hostname string, userID types.UserID) types.NodeView {
+	userNodes := s.nodeStore.ListNodesByUser(userID)
+	for i := range userNodes.Len() {
+		n := userNodes.At(i)
+		if n.Hostname() == hostname && n.IsExpired() && !n.IsTagged() {
+			return n
+		}
+	}
+
+	return types.NodeView{}
+}
+
 // HandleNodeFromAuthPath handles node registration through authentication flow (like OIDC).
 func (s *State) HandleNodeFromAuthPath(
 	authID types.AuthID,
@@ -2163,12 +2228,34 @@ func (s *State) HandleNodeFromAuthPath(
 			return types.NodeView{}, change.Change{}, err
 		}
 	} else {
-		finalNode, err = s.createNewNodeFromAuth(
-			logger, user, regEntry, hostname, hostinfo,
-			expiry, registrationMethod, types.NodeView{},
-		)
-		if err != nil {
-			return types.NodeView{}, change.Change{}, err
+		// No machine key match. Before creating a brand new node, check if the
+		// same user has an expired node with an identical hostname. This handles
+		// the common case of "tailscale logout" followed by "tailscale up" which
+		// generates a new machine key — without this, a duplicate node is created
+		// even though the device is clearly the same.
+		reclaimNode := s.findExpiredNodeByHostname(hostname, types.UserID(user.ID))
+		if reclaimNode.Valid() {
+			logger.Info().
+				Str(zf.ExistingNodeName, reclaimNode.Hostname()).
+				Uint64(zf.ExistingNodeID, reclaimNode.ID().Uint64()).
+				Str("old_machine_key", reclaimNode.MachineKey().ShortString()).
+				Msg("Reclaiming expired node with new machine key (same hostname and user)")
+
+			updateParams.ExistingNode = reclaimNode
+			updateParams.IsReclaimWithNewMachineKey = true
+
+			finalNode, err = s.applyAuthNodeUpdate(updateParams)
+			if err != nil {
+				return types.NodeView{}, change.Change{}, err
+			}
+		} else {
+			finalNode, err = s.createNewNodeFromAuth(
+				logger, user, regEntry, hostname, hostinfo,
+				expiry, registrationMethod, types.NodeView{},
+			)
+			if err != nil {
+				return types.NodeView{}, change.Change{}, err
+			}
 		}
 	}
 
@@ -2195,6 +2282,18 @@ func (s *State) HandleNodeFromAuthPath(
 	} else {
 		c = change.NodeAdded(finalNode.ID())
 	}
+
+	// Reconcile provider allocations for the registered node in the background.
+	// This ensures VPN provider keys (e.g. Mullvad) are allocated immediately
+	// at registration time, rather than waiting for the node to establish a map
+	// session via Connect(). Without this, a newly registered node may not get
+	// provider exit nodes until its first map poll.
+	go func(node types.NodeView) {
+		ctx, cancel := context.WithTimeout(context.Background(), providerConnectReconcileTimeout)
+		defer cancel()
+
+		s.ReconcileProviderAllocationsForNode(ctx, node)
+	}(finalNode)
 
 	return finalNode, c, nil
 }
@@ -2492,6 +2591,14 @@ func (s *State) HandleNodeFromPreAuthKey(
 	} else {
 		c = change.NodeAdded(finalNode.ID())
 	}
+
+	// Reconcile provider allocations for the registered node in the background.
+	go func(node types.NodeView) {
+		ctx, cancel := context.WithTimeout(context.Background(), providerConnectReconcileTimeout)
+		defer cancel()
+
+		s.ReconcileProviderAllocationsForNode(ctx, node)
+	}(finalNode)
 
 	return finalNode, c, nil
 }

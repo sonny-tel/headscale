@@ -68,6 +68,7 @@ type Config struct {
 	IPAllocation                   IPAllocationStrategy
 	NoisePrivateKeyPath            string
 	BaseDomain                     string
+	TailnetDisplayName             string
 	Log                            LogConfig
 	DisableUpdateCheck             bool
 
@@ -355,6 +356,7 @@ func LoadConfig(path string, isFile bool) error {
 
 	viper.SetDefault("dns.magic_dns", true)
 	viper.SetDefault("dns.base_domain", "")
+	viper.SetDefault("tailnet_display_name", "")
 	viper.SetDefault("dns.override_local_dns", true)
 	viper.SetDefault("dns.nameservers.global", []string{})
 	viper.SetDefault("dns.nameservers.split", map[string]string{})
@@ -1011,6 +1013,7 @@ func LoadServerConfig() (*Config, error) {
 			viper.GetString("noise.private_key_path"),
 		),
 		BaseDomain: dnsConfig.BaseDomain,
+		TailnetDisplayName: viper.GetString("tailnet_display_name"),
 
 		DERP: derpConfig,
 

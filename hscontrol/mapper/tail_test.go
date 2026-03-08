@@ -49,13 +49,15 @@ func TestTailNode(t *testing.T) {
 	expire := time.Date(2500, time.November, 11, 23, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name       string
-		node       *types.Node
-		pol        []byte
-		dnsConfig  *tailcfg.DNSConfig
-		baseDomain string
-		want       *tailcfg.Node
-		wantErr    bool
+		name               string
+		node               *types.Node
+		pol                []byte
+		dnsConfig          *tailcfg.DNSConfig
+		baseDomain         string
+		serverURL          string
+		tailnetDisplayName string
+		want               *tailcfg.Node
+		wantErr            bool
 	}{
 		{
 			name: "empty-node",
@@ -74,9 +76,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing: []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:       []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:         []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
+					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
+					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
+					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
 				},
 			},
 			wantErr: false,
@@ -163,9 +166,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing: []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:       []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:         []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
+					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
+					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
+					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
 				},
 			},
 			wantErr: false,
@@ -188,9 +192,68 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing: []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:       []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:         []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
+					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
+					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
+					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "tailnet-display-name",
+			node: &types.Node{
+				GivenName: "withdomain",
+				Hostinfo:  &tailcfg.Hostinfo{},
+			},
+			dnsConfig:          &tailcfg.DNSConfig{},
+			baseDomain:         "",
+			serverURL:          "https://hs.example.com",
+			tailnetDisplayName: "My Tailnet",
+			want: &tailcfg.Node{
+				Name:              "withdomain",
+				StableID:          "0",
+				HomeDERP:          0,
+				LegacyDERPString:  "127.3.3.40:0",
+				Hostinfo:          hiview(tailcfg.Hostinfo{}),
+				MachineAuthorized: true,
+
+				CapMap: tailcfg.NodeCapMap{
+					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
+					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
+					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
+					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.NodeAttrTailnetDisplayName: []tailcfg.RawMessage{
+						tailcfg.RawMessage(`"My Tailnet"`),
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "tailnet-display-name-defaults-to-domain",
+			node: &types.Node{
+				GivenName: "fallback",
+				Hostinfo:  &tailcfg.Hostinfo{},
+			},
+			dnsConfig: &tailcfg.DNSConfig{},
+			serverURL: "https://hs.example.com",
+			want: &tailcfg.Node{
+				Name:              "fallback",
+				StableID:          "0",
+				HomeDERP:          0,
+				LegacyDERPString:  "127.3.3.40:0",
+				Hostinfo:          hiview(tailcfg.Hostinfo{}),
+				MachineAuthorized: true,
+
+				CapMap: tailcfg.NodeCapMap{
+					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
+					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
+					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
+					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.NodeAttrTailnetDisplayName: []tailcfg.RawMessage{
+						tailcfg.RawMessage(`"hs.example.com"`),
+					},
 				},
 			},
 			wantErr: false,
@@ -205,6 +268,8 @@ func TestTailNode(t *testing.T) {
 			primary := routes.New()
 			cfg := &types.Config{
 				BaseDomain:          tt.baseDomain,
+				ServerURL:           tt.serverURL,
+				TailnetDisplayName:  tt.tailnetDisplayName,
 				TailcfgDNSConfig:    tt.dnsConfig,
 				RandomizeClientPort: false,
 				Taildrop:            types.TaildropConfig{Enabled: true},

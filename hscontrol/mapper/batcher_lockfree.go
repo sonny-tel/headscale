@@ -36,10 +36,9 @@ type LockFreeBatcher struct {
 	connected *xsync.Map[types.NodeID, *time.Time]
 
 	// Work queue channel
-	workCh     chan work
-	workChOnce sync.Once // Ensures workCh is only closed once
-	done       chan struct{}
-	doneOnce   sync.Once // Ensures done is only closed once
+	workCh   chan work
+	done     chan struct{}
+	doneOnce sync.Once // Ensures done is only closed once
 
 	// Batching state
 	pendingChanges *xsync.Map[types.NodeID, []change.Change]
@@ -173,10 +172,10 @@ func (b *LockFreeBatcher) Close() {
 		}
 	})
 
-	// Only close workCh once using sync.Once to prevent races
-	b.workChOnce.Do(func() {
-		close(b.workCh)
-	})
+	// Do NOT close workCh here. Workers and queueWork both select on b.done
+	// for shutdown. Closing workCh creates a race where the select in queueWork
+	// can randomly pick the send case on the closed channel, causing a panic.
+	// Workers will exit via their <-b.done case.
 
 	// Close the underlying channels supplying the data to the clients.
 	b.nodes.Range(func(nodeID types.NodeID, conn *multiChannelNodeConn) bool {
