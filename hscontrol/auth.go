@@ -74,7 +74,15 @@ func (h *Headscale) handleRegister(
 			// When tailscaled restarts, it sends RegisterRequest with Auth=nil and Expiry=zero.
 			// Return the current node state without modification.
 			// See: https://github.com/juanfont/headscale/issues/2862
-			if req.Expiry.IsZero() && node.Expiry().Valid() && !node.IsExpired() {
+			//
+			// We check !node.IsExpired() which covers all non-expired states:
+			// - nil Expiry (never set, e.g. web auth) → not expired
+			// - zero time Expiry (IsZero=true) → not expired
+			// - future Expiry → not expired
+			// Previously this used node.Expiry().Valid() which returns false for nil
+			// Expiry pointers, causing web-auth nodes to incorrectly fall through
+			// to handleLogout on every reconnection.
+			if req.Expiry.IsZero() && !node.IsExpired() {
 				return nodeToRegisterResponse(node), nil
 			}
 

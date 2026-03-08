@@ -3986,3 +3986,82 @@ func TestTaggedNodeWithoutUserToDifferentUser(t *testing.T) {
 		nodeAfterReauth.ID().Uint64(), nodeAfterReauth.Tags().AsSlice(),
 		nodeAfterReauth.IsTagged(), nodeAfterReauth.UserID().Get())
 }
+
+// TestWebAuthNodeReconnectWithNilExpiry tests that a node registered via web auth
+// (which has nil expiry) can reconnect without being incorrectly treated as a logout.
+//
+// Bug: When a web-auth node reconnects (Auth=nil, Expiry=zero), the fast-path in
+// handleRegister checked node.Expiry().Valid() which returns false for nil expiry.
+// This caused the code to fall through to handleLogout, where time.Time{}.Before(time.Now())
+// is true (year 0001 < 2026), treating the reconnection as a logout request.
+//
+// Fix: Changed the fast-path condition to use !node.IsExpired() instead of
+// node.Expiry().Valid() && !node.IsExpired(), since IsExpired() correctly returns
+// false for nil expiry (nil = never expires).
+func TestWebAuthNodeReconnectWithNilExpiry(t *testing.T) {
+	t.Parallel()
+
+	app := createTestApp(t)
+
+	user := app.state.CreateUserForTest("webauth-user")
+
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+
+	// Step 1: Simulate web auth registration by creating a node with nil expiry
+	// (this is what HandleNodeFromAuthPath does for web auth / CLI registration)
+	registrationID := types.MustAuthID()
+	regEntry := types.NewRegisterAuthRequest(types.Node{
+		MachineKey: machineKey.Public(),
+		NodeKey:    nodeKey.Public(),
+		Hostname:   "webauth-node",
+		Hostinfo: &tailcfg.Hostinfo{
+			Hostname: "webauth-node",
+		},
+		// Expiry intentionally NOT set (nil) - this is what web auth produces
+	})
+	app.state.SetAuthCacheEntry(registrationID, regEntry)
+
+	node, _, err := app.state.HandleNodeFromAuthPath(
+		registrationID,
+		types.UserID(user.ID),
+		nil, // nil expiry = web auth / CLI approval
+		"cli",
+	)
+	require.NoError(t, err, "Web auth registration should succeed")
+	require.True(t, node.Valid())
+	require.False(t, node.Expiry().Valid(), "Web auth node should have nil expiry")
+	require.False(t, node.IsExpired(), "Node with nil expiry should not be expired")
+
+	t.Logf("Registered web auth node: ID=%d, Hostname=%s, Expiry valid=%t",
+		node.ID().Uint64(), node.Hostname(), node.Expiry().Valid())
+
+	// Step 2: Simulate client reconnection (e.g., tailscaled restart, network change)
+	// Tailscale client sends Auth=nil, Expiry=zero on reconnection
+	reconnectReq := tailcfg.RegisterRequest{
+		Auth:    nil, // No auth on reconnection
+		NodeKey: nodeKey.Public(),
+		Expiry:  time.Time{}, // Zero expiry = standard reconnection
+		Hostinfo: &tailcfg.Hostinfo{
+			Hostname: "webauth-node",
+		},
+	}
+
+	resp, err := app.handleRegister(context.Background(), reconnectReq, machineKey.Public())
+	require.NoError(t, err, "Reconnection should succeed")
+	require.NotNil(t, resp, "Response should not be nil")
+
+	// The key assertions: reconnection should NOT trigger logout behavior
+	assert.False(t, resp.NodeKeyExpired,
+		"Node key should NOT be expired - reconnection must not trigger logout")
+	assert.True(t, resp.MachineAuthorized,
+		"Machine should remain authorized after reconnection")
+
+	// Verify the node's expiry was not corrupted by the reconnection
+	nodeAfter, found := app.state.GetNodeByNodeKey(nodeKey.Public())
+	require.True(t, found, "Node should still exist after reconnection")
+	require.False(t, nodeAfter.IsExpired(), "Node should not be expired after reconnection")
+
+	t.Logf("After reconnect: NodeKeyExpired=%t, MachineAuthorized=%t, IsExpired=%t",
+		resp.NodeKeyExpired, resp.MachineAuthorized, nodeAfter.IsExpired())
+}

@@ -766,20 +766,10 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
 			{
-				// Add owner_node_id FK and location columns for external WireGuard peers.
-				// owner_node_id links an external peer to its owning headscale node (1:1).
+				// Add location columns for external WireGuard peers.
 				// Location columns populate tailcfg.Location for exit node picker UI.
 				ID: "202603060100-add-external-peer-owner-location",
 				Migrate: func(tx *gorm.DB) error {
-					if !tx.Migrator().HasColumn(&types.Node{}, "owner_node_id") {
-						err := tx.Exec(
-							"ALTER TABLE nodes ADD COLUMN owner_node_id bigint REFERENCES nodes(id) ON DELETE CASCADE",
-						).Error
-						if err != nil {
-							return fmt.Errorf("adding owner_node_id column: %w", err)
-						}
-					}
-
 					locationColumns := []struct {
 						name string
 						typ  string
@@ -867,7 +857,9 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 	)
 
 	migrations.InitSchema(func(tx *gorm.DB) error {
-		// Create all tables using AutoMigrate
+		// Create all tables using AutoMigrate for core types.
+		// This must produce a schema matching schema.sql for a fresh database.
+		// When new tables are added via migrations, they must also be added here.
 		err := tx.AutoMigrate(
 			&types.User{},
 			&types.PreAuthKey{},
@@ -877,6 +869,40 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 		)
 		if err != nil {
 			return err
+		}
+
+		// Create VPN tables with raw SQL to exactly match schema.sql.
+		// AutoMigrate cannot be used here because the GORM struct tags
+		// don't fully express the composite UNIQUE constraints and FKs.
+		vpnTables := []string{
+			`CREATE TABLE IF NOT EXISTS vpn_provider_accounts(
+				id integer PRIMARY KEY AUTOINCREMENT,
+				provider_name text NOT NULL,
+				account_id text NOT NULL,
+				max_keys integer NOT NULL DEFAULT 5,
+				expires_at datetime,
+				enabled numeric NOT NULL DEFAULT true,
+				created_at datetime,
+				updated_at datetime,
+				UNIQUE(provider_name, account_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS vpn_key_allocations(
+				id integer PRIMARY KEY AUTOINCREMENT,
+				account_id integer NOT NULL,
+				node_id bigint NOT NULL,
+				node_key text NOT NULL,
+				assigned_ipv4 text DEFAULT '',
+				assigned_ipv6 text DEFAULT '',
+				allocated_at datetime,
+				UNIQUE(account_id, node_key),
+				CONSTRAINT fk_vpn_key_allocations_account FOREIGN KEY(account_id) REFERENCES vpn_provider_accounts(id) ON DELETE CASCADE,
+				CONSTRAINT fk_vpn_key_allocations_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+			)`,
+		}
+		for _, sql := range vpnTables {
+			if err := tx.Exec(sql).Error; err != nil {
+				return err
+			}
 		}
 
 		// Drop all indexes (both GORM-created and potentially pre-existing ones)

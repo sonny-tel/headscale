@@ -104,9 +104,6 @@ type Node struct {
 	IsWireguardOnly bool     `protobuf:"varint,27,opt,name=is_wireguard_only,json=isWireguardOnly,proto3" json:"is_wireguard_only,omitempty"`
 	IsJailed        bool     `protobuf:"varint,28,opt,name=is_jailed,json=isJailed,proto3" json:"is_jailed,omitempty"`
 	Endpoints       []string `protobuf:"bytes,29,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
-	// owner_node_id is the ID of the headscale node that owns this external peer.
-	// Only set for WireGuard-only peers.
-	OwnerNodeId uint64 `protobuf:"varint,30,opt,name=owner_node_id,json=ownerNodeId,proto3" json:"owner_node_id,omitempty"`
 	// Location metadata for exit node picker UI grouping.
 	LocationCountry     string  `protobuf:"bytes,31,opt,name=location_country,json=locationCountry,proto3" json:"location_country,omitempty"`
 	LocationCountryCode string  `protobuf:"bytes,32,opt,name=location_country_code,json=locationCountryCode,proto3" json:"location_country_code,omitempty"`
@@ -294,13 +291,6 @@ func (x *Node) GetEndpoints() []string {
 		return x.Endpoints
 	}
 	return nil
-}
-
-func (x *Node) GetOwnerNodeId() uint64 {
-	if x != nil {
-		return x.OwnerNodeId
-	}
-	return 0
 }
 
 func (x *Node) GetLocationCountry() string {
@@ -1301,7 +1291,7 @@ var File_headscale_v1_node_proto protoreflect.FileDescriptor
 
 const file_headscale_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\x8f\t\n" +
+	"\x17headscale/v1/node.proto\x12\fheadscale.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dheadscale/v1/preauthkey.proto\x1a\x17headscale/v1/user.proto\"\xeb\b\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1f\n" +
 	"\vmachine_key\x18\x02 \x01(\tR\n" +
@@ -1328,8 +1318,7 @@ const file_headscale_v1_node_proto_rawDesc = "" +
 	"\x04tags\x18\x1a \x03(\tR\x04tags\x12*\n" +
 	"\x11is_wireguard_only\x18\x1b \x01(\bR\x0fisWireguardOnly\x12\x1b\n" +
 	"\tis_jailed\x18\x1c \x01(\bR\bisJailed\x12\x1c\n" +
-	"\tendpoints\x18\x1d \x03(\tR\tendpoints\x12\"\n" +
-	"\rowner_node_id\x18\x1e \x01(\x04R\vownerNodeId\x12)\n" +
+	"\tendpoints\x18\x1d \x03(\tR\tendpoints\x12)\n" +
 	"\x10location_country\x18\x1f \x01(\tR\x0flocationCountry\x122\n" +
 	"\x15location_country_code\x18  \x01(\tR\x13locationCountryCode\x12#\n" +
 	"\rlocation_city\x18! \x01(\tR\flocationCity\x12,\n" +

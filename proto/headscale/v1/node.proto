@@ -59,9 +59,7 @@ message Node {
   bool is_jailed = 28;
   repeated string endpoints = 29;
 
-  // owner_node_id is the ID of the headscale node that owns this external peer.
-  // Only set for WireGuard-only peers.
-  uint64 owner_node_id = 30;
+  // Field 30 reserved.
 
   // Location metadata for exit node picker UI grouping.
   string location_country = 31;

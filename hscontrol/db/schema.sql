@@ -93,7 +93,6 @@ CREATE TABLE nodes(
   is_jailed numeric NOT NULL DEFAULT false,
   exit_node_dns_resolvers text,
 
-  owner_node_id bigint,
   location_country text,
   location_country_code text,
   location_city text,
@@ -107,8 +106,7 @@ CREATE TABLE nodes(
   deleted_at datetime,
 
   CONSTRAINT fk_nodes_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_nodes_auth_key FOREIGN KEY(auth_key_id) REFERENCES pre_auth_keys(id),
-  CONSTRAINT fk_nodes_owner FOREIGN KEY(owner_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+  CONSTRAINT fk_nodes_auth_key FOREIGN KEY(auth_key_id) REFERENCES pre_auth_keys(id)
 );
 
 CREATE TABLE policies(

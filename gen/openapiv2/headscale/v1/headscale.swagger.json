@@ -1632,11 +1632,6 @@
             "type": "string"
           }
         },
-        "ownerNodeId": {
-          "type": "string",
-          "format": "uint64",
-          "description": "owner_node_id is the ID of the headscale node that owns this external peer.\nOnly set for WireGuard-only peers."
-        },
         "locationCountry": {
           "type": "string",
           "description": "Location metadata for exit node picker UI grouping."

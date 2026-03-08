@@ -89,9 +89,6 @@ func (src *Node) Clone() *Node {
 			}
 		}
 	}
-	if dst.OwnerNodeID != nil {
-		dst.OwnerNodeID = ptr.To(*src.OwnerNodeID)
-	}
 	return dst
 }
 
@@ -123,7 +120,6 @@ var _NodeCloneNeedsRegeneration = Node(struct {
 	IsWireGuardOnly      bool
 	IsJailed             bool
 	ExitNodeDNSResolvers []*dnstype.Resolver
-	OwnerNodeID          *NodeID
 	LocationCountry      string
 	LocationCountryCode  string
 	LocationCity         string

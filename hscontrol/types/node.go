@@ -157,12 +157,6 @@ type Node struct {
 	// WireGuard-only node is used as an exit node.
 	ExitNodeDNSResolvers []*dnstype.Resolver `gorm:"column:exit_node_dns_resolvers;serializer:json"`
 
-	// OwnerNodeID is the ID of the headscale node that owns this external peer.
-	// Only set for WireGuard-only peers. The external peer is only visible in
-	// the owner's MapResponse. ON DELETE CASCADE removes external peers when the
-	// owner is deleted.
-	OwnerNodeID *NodeID `gorm:"column:owner_node_id"`
-
 	// Location fields for exit node picker UI grouping.
 	// Only relevant for WireGuard-only peers used as exit nodes.
 	LocationCountry     string  `gorm:"column:location_country"`
@@ -454,10 +448,6 @@ func (node *Node) Proto() *v1.Node {
 
 	nodeProto.IsWireguardOnly = node.IsWireGuardOnly
 	nodeProto.IsJailed = node.IsJailed
-
-	if node.OwnerNodeID != nil {
-		nodeProto.OwnerNodeId = node.OwnerNodeID.Uint64()
-	}
 
 	if loc := node.Location(); loc != nil {
 		nodeProto.LocationCountry = loc.Country

@@ -274,14 +274,6 @@ func (v NodeView) ExitNodeDNSResolvers() views.SliceView[*dnstype.Resolver, dnst
 	return views.SliceOfViews[*dnstype.Resolver, dnstype.ResolverView](v.ж.ExitNodeDNSResolvers)
 }
 
-// OwnerNodeID is the ID of the headscale node that owns this external peer.
-// Only set for WireGuard-only peers. The external peer is only visible in
-// the owner's MapResponse. ON DELETE CASCADE removes external peers when the
-// owner is deleted.
-func (v NodeView) OwnerNodeID() views.ValuePointer[NodeID] {
-	return views.ValuePointerOf(v.ж.OwnerNodeID)
-}
-
 // Location fields for exit node picker UI grouping.
 // Only relevant for WireGuard-only peers used as exit nodes.
 func (v NodeView) LocationCountry() string     { return v.ж.LocationCountry }
@@ -321,7 +313,6 @@ var _NodeViewNeedsRegeneration = Node(struct {
 	IsWireGuardOnly      bool
 	IsJailed             bool
 	ExitNodeDNSResolvers []*dnstype.Resolver
-	OwnerNodeID          *NodeID
 	LocationCountry      string
 	LocationCountryCode  string
 	LocationCity         string
