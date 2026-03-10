@@ -86,6 +86,10 @@ type Config struct {
 	// not directly converted into a tailcfg.DNSConfig.
 	DNSConfig DNSConfig
 
+	// FileDNSConfig is a copy of the DNSConfig as originally loaded from the config file.
+	// It is used as the "defaults" when restoring runtime DNS overrides.
+	FileDNSConfig DNSConfig
+
 	// TailcfgDNSConfig is the tailcfg representation of the DNS configuration,
 	// it can be used directly when sending Netmaps to clients.
 	TailcfgDNSConfig *tailcfg.DNSConfig
@@ -104,6 +108,10 @@ type Config struct {
 	Policy PolicyConfig
 
 	Tuning Tuning
+
+	WebUI WebUIConfig
+
+	CollectServices bool
 }
 
 type DNSConfig struct {
@@ -230,6 +238,84 @@ type CLIConfig struct {
 type PolicyConfig struct {
 	Path string
 	Mode PolicyMode
+}
+
+// WebUIConfig contains configuration for the embedded admin web UI.
+type WebUIConfig struct {
+	Enabled    bool                 `mapstructure:"enabled"`
+	StaticPath string               `mapstructure:"static_path"`
+	BasePath   string               `mapstructure:"base_path"`
+	Session    WebUISessionConfig   `mapstructure:"session"`
+	Auth       WebUIAuthConfig      `mapstructure:"auth"`
+	Branding   WebUIBrandingConfig  `mapstructure:"branding"`
+	Features   WebUIFeaturesConfig  `mapstructure:"features"`
+	RateLimit  WebUIRateLimitConfig `mapstructure:"rate_limit"`
+}
+
+// WebUISessionConfig contains session cookie settings.
+type WebUISessionConfig struct {
+	SecretPath     string        `mapstructure:"secret_path"`
+	Duration       time.Duration `mapstructure:"duration"`
+	CookieName     string        `mapstructure:"cookie_name"`
+	CookieSecure   bool          `mapstructure:"cookie_secure"`
+	CookieSameSite string        `mapstructure:"cookie_same_site"`
+	CookieDomain   string        `mapstructure:"cookie_domain"`
+}
+
+// WebUIAuthConfig contains authentication provider settings.
+type WebUIAuthConfig struct {
+	Local  WebUILocalAuthConfig  `mapstructure:"local"`
+	GitHub WebUIGitHubAuthConfig `mapstructure:"github"`
+}
+
+// WebUILocalAuthConfig contains local password auth settings.
+type WebUILocalAuthConfig struct {
+	Enabled           bool           `mapstructure:"enabled"`
+	MinPasswordLength int            `mapstructure:"min_password_length"`
+	MaxLoginAttempts  int            `mapstructure:"max_login_attempts"`
+	LockoutDuration   time.Duration  `mapstructure:"lockout_duration"`
+	OTP               WebUIOTPConfig `mapstructure:"otp"`
+}
+
+// WebUIOTPConfig contains TOTP settings.
+type WebUIOTPConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Issuer    string `mapstructure:"issuer"`
+	Digits    int    `mapstructure:"digits"`
+	Period    int    `mapstructure:"period"`
+	Algorithm string `mapstructure:"algorithm"`
+}
+
+// WebUIGitHubAuthConfig contains GitHub OAuth settings.
+type WebUIGitHubAuthConfig struct {
+	Enabled      bool     `mapstructure:"enabled"`
+	ClientID     string   `mapstructure:"client_id"`
+	ClientSecret string   `mapstructure:"client_secret"`
+	AllowedOrgs  []string `mapstructure:"allowed_orgs"`
+	AllowedTeams []string `mapstructure:"allowed_teams"`
+	AllowedUsers []string `mapstructure:"allowed_users"`
+}
+
+// WebUIBrandingConfig contains appearance settings.
+type WebUIBrandingConfig struct {
+	Title      string `mapstructure:"title"`
+	LogoURL    string `mapstructure:"logo_url"`
+	FaviconURL string `mapstructure:"favicon_url"`
+	Theme      string `mapstructure:"theme"`
+}
+
+// WebUIFeaturesConfig contains feature toggles.
+type WebUIFeaturesConfig struct {
+	SelfService bool `mapstructure:"self_service"`
+	ReadOnly    bool `mapstructure:"readonly"`
+	DebugPanel  bool `mapstructure:"debug_panel"`
+	PageSize    int  `mapstructure:"page_size"`
+}
+
+// WebUIRateLimitConfig contains rate limiting settings.
+type WebUIRateLimitConfig struct {
+	LoginAttemptsPerMinute int `mapstructure:"login_attempts_per_minute"`
+	APIRequestsPerMinute   int `mapstructure:"api_requests_per_minute"`
 }
 
 func (p *PolicyConfig) IsEmpty() bool {
@@ -406,6 +492,42 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("tuning.node_store_batch_timeout", "500ms")
 
 	viper.SetDefault("prefixes.allocation", string(IPAllocationStrategySequential))
+
+	// Web UI defaults
+	viper.SetDefault("web_ui.enabled", false)
+	viper.SetDefault("web_ui.static_path", "/var/lib/headscale/web-ui")
+	viper.SetDefault("web_ui.base_path", "/admin")
+	viper.SetDefault("web_ui.session.secret_path", "/var/lib/headscale/session_secret")
+	viper.SetDefault("web_ui.session.duration", "24h")
+	viper.SetDefault("web_ui.session.cookie_name", "hs_session")
+	viper.SetDefault("web_ui.session.cookie_secure", true)
+	viper.SetDefault("web_ui.session.cookie_same_site", "lax")
+	viper.SetDefault("web_ui.session.cookie_domain", "")
+	viper.SetDefault("web_ui.auth.local.enabled", true)
+	viper.SetDefault("web_ui.auth.local.min_password_length", 10)
+	viper.SetDefault("web_ui.auth.local.max_login_attempts", 5)
+	viper.SetDefault("web_ui.auth.local.lockout_duration", "15m")
+	viper.SetDefault("web_ui.auth.local.otp.enabled", false)
+	viper.SetDefault("web_ui.auth.local.otp.issuer", "headscale")
+	viper.SetDefault("web_ui.auth.local.otp.digits", 6)
+	viper.SetDefault("web_ui.auth.local.otp.period", 30)
+	viper.SetDefault("web_ui.auth.local.otp.algorithm", "SHA1")
+	viper.SetDefault("web_ui.auth.github.enabled", false)
+	viper.SetDefault("web_ui.auth.github.client_id", "")
+	viper.SetDefault("web_ui.auth.github.client_secret", "")
+	viper.SetDefault("web_ui.auth.github.allowed_orgs", []string{})
+	viper.SetDefault("web_ui.auth.github.allowed_teams", []string{})
+	viper.SetDefault("web_ui.auth.github.allowed_users", []string{})
+	viper.SetDefault("web_ui.branding.title", "Headscale Admin")
+	viper.SetDefault("web_ui.branding.logo_url", "")
+	viper.SetDefault("web_ui.branding.favicon_url", "")
+	viper.SetDefault("web_ui.branding.theme", "auto")
+	viper.SetDefault("web_ui.features.self_service", false)
+	viper.SetDefault("web_ui.features.readonly", false)
+	viper.SetDefault("web_ui.features.debug_panel", false)
+	viper.SetDefault("web_ui.features.page_size", 50)
+	viper.SetDefault("web_ui.rate_limit.login_attempts_per_minute", 10)
+	viper.SetDefault("web_ui.rate_limit.api_requests_per_minute", 100)
 
 	err := viper.ReadInConfig()
 	if err != nil {
@@ -632,6 +754,61 @@ func policyConfig() PolicyConfig {
 	}
 }
 
+func webUIConfig() WebUIConfig {
+	return WebUIConfig{
+		Enabled:    viper.GetBool("web_ui.enabled"),
+		StaticPath: viper.GetString("web_ui.static_path"),
+		BasePath:   viper.GetString("web_ui.base_path"),
+		Session: WebUISessionConfig{
+			SecretPath:     util.AbsolutePathFromConfigPath(viper.GetString("web_ui.session.secret_path")),
+			Duration:       viper.GetDuration("web_ui.session.duration"),
+			CookieName:     viper.GetString("web_ui.session.cookie_name"),
+			CookieSecure:   viper.GetBool("web_ui.session.cookie_secure"),
+			CookieSameSite: viper.GetString("web_ui.session.cookie_same_site"),
+			CookieDomain:   viper.GetString("web_ui.session.cookie_domain"),
+		},
+		Auth: WebUIAuthConfig{
+			Local: WebUILocalAuthConfig{
+				Enabled:           viper.GetBool("web_ui.auth.local.enabled"),
+				MinPasswordLength: viper.GetInt("web_ui.auth.local.min_password_length"),
+				MaxLoginAttempts:  viper.GetInt("web_ui.auth.local.max_login_attempts"),
+				LockoutDuration:   viper.GetDuration("web_ui.auth.local.lockout_duration"),
+				OTP: WebUIOTPConfig{
+					Enabled:   viper.GetBool("web_ui.auth.local.otp.enabled"),
+					Issuer:    viper.GetString("web_ui.auth.local.otp.issuer"),
+					Digits:    viper.GetInt("web_ui.auth.local.otp.digits"),
+					Period:    viper.GetInt("web_ui.auth.local.otp.period"),
+					Algorithm: viper.GetString("web_ui.auth.local.otp.algorithm"),
+				},
+			},
+			GitHub: WebUIGitHubAuthConfig{
+				Enabled:      viper.GetBool("web_ui.auth.github.enabled"),
+				ClientID:     viper.GetString("web_ui.auth.github.client_id"),
+				ClientSecret: viper.GetString("web_ui.auth.github.client_secret"),
+				AllowedOrgs:  viper.GetStringSlice("web_ui.auth.github.allowed_orgs"),
+				AllowedTeams: viper.GetStringSlice("web_ui.auth.github.allowed_teams"),
+				AllowedUsers: viper.GetStringSlice("web_ui.auth.github.allowed_users"),
+			},
+		},
+		Branding: WebUIBrandingConfig{
+			Title:      viper.GetString("web_ui.branding.title"),
+			LogoURL:    viper.GetString("web_ui.branding.logo_url"),
+			FaviconURL: viper.GetString("web_ui.branding.favicon_url"),
+			Theme:      viper.GetString("web_ui.branding.theme"),
+		},
+		Features: WebUIFeaturesConfig{
+			SelfService: viper.GetBool("web_ui.features.self_service"),
+			ReadOnly:    viper.GetBool("web_ui.features.readonly"),
+			DebugPanel:  viper.GetBool("web_ui.features.debug_panel"),
+			PageSize:    viper.GetInt("web_ui.features.page_size"),
+		},
+		RateLimit: WebUIRateLimitConfig{
+			LoginAttemptsPerMinute: viper.GetInt("web_ui.rate_limit.login_attempts_per_minute"),
+			APIRequestsPerMinute:   viper.GetInt("web_ui.rate_limit.api_requests_per_minute"),
+		},
+	}
+}
+
 func logConfig() LogConfig {
 	logLevelStr := viper.GetString("log.level")
 
@@ -816,7 +993,8 @@ func (d *DNSConfig) splitResolvers() map[string][]*dnstype.Resolver {
 	return routes
 }
 
-func dnsToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
+// DNSToTailcfgDNS converts a DNSConfig to the tailcfg.DNSConfig wire format.
+func DNSToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
 	cfg := tailcfg.DNSConfig{}
 
 	if dns.BaseDomain == "" && dns.MagicDNS {
@@ -1026,7 +1204,8 @@ func LoadServerConfig() (*Config, error) {
 		TLS: tlsConfig(),
 
 		DNSConfig:        dnsConfig,
-		TailcfgDNSConfig: dnsToTailcfgDNS(dnsConfig),
+		FileDNSConfig:    dnsConfig,
+		TailcfgDNSConfig: DNSToTailcfgDNS(dnsConfig),
 
 		ACMEEmail: viper.GetString("acme_email"),
 		ACMEURL:   viper.GetString("acme_url"),
@@ -1104,6 +1283,10 @@ func LoadServerConfig() (*Config, error) {
 			NodeStoreBatchSize:      viper.GetInt("tuning.node_store_batch_size"),
 			NodeStoreBatchTimeout:   viper.GetDuration("tuning.node_store_batch_timeout"),
 		},
+
+		WebUI: webUIConfig(),
+
+		CollectServices: viper.GetBool("collect_services"),
 	}, nil
 }
 

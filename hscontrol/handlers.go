@@ -235,12 +235,14 @@ func (h *Headscale) VersionHandler(
 }
 
 type AuthProviderWeb struct {
-	serverURL string
+	serverURL     string
+	webUIBasePath string
 }
 
-func NewAuthProviderWeb(serverURL string) *AuthProviderWeb {
+func NewAuthProviderWeb(serverURL string, webUIBasePath string) *AuthProviderWeb {
 	return &AuthProviderWeb{
-		serverURL: serverURL,
+		serverURL:     serverURL,
+		webUIBasePath: webUIBasePath,
 	}
 }
 
@@ -265,6 +267,15 @@ func (a *AuthProviderWeb) AuthHandler(
 	authID, err := authIDFromRequest(req)
 	if err != nil {
 		httpError(writer, err)
+		return
+	}
+
+	// When WebUI is enabled, redirect to the SPA registration page
+	if a.webUIBasePath != "" {
+		redirectURL := fmt.Sprintf("%s/register/%s",
+			strings.TrimSuffix(a.webUIBasePath, "/"),
+			authID.String())
+		http.Redirect(writer, req, redirectURL, http.StatusFound)
 		return
 	}
 
@@ -310,6 +321,15 @@ func (a *AuthProviderWeb) RegisterHandler(
 	authId, err := authIDFromRequest(req)
 	if err != nil {
 		httpError(writer, err)
+		return
+	}
+
+	// When WebUI is enabled, redirect to the SPA registration page
+	if a.webUIBasePath != "" {
+		redirectURL := fmt.Sprintf("%s/register/%s",
+			strings.TrimSuffix(a.webUIBasePath, "/"),
+			authId.String())
+		http.Redirect(writer, req, redirectURL, http.StatusFound)
 		return
 	}
 

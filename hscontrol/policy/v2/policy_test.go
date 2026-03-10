@@ -1339,3 +1339,136 @@ func TestIssue2990SameUserTaggedDevice(t *testing.T) {
 		t.Logf("  rule %d: SrcIPs=%v DstPorts=%v", i, rule.SrcIPs, rule.DstPorts)
 	}
 }
+
+func TestNodeAppCapsForNode(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1", Email: "user1@headscale.net"},
+	}
+
+	node1 := node("connector", "100.64.0.1", "fd7a:115c:a1e0::1", users[0])
+	node1.ID = 1
+
+	node2 := node("client", "100.64.0.2", "fd7a:115c:a1e0::2", users[0])
+	node2.ID = 2
+
+	nodes := types.Nodes{node1, node2}
+
+	tests := []struct {
+		name     string
+		pol      string
+		nodeIdx  int
+		wantCaps map[tailcfg.NodeCapability]int // cap -> expected count of values
+	}{
+		{
+			name:     "no-app-caps",
+			pol:      `{"nodeAttrs": [{"target": ["*"], "attr": ["funnel"]}]}`,
+			nodeIdx:  0,
+			wantCaps: nil,
+		},
+		{
+			name: "app-connector-for-all",
+			pol: `{
+				"nodeAttrs": [{
+					"target": ["*"],
+					"app": {
+						"tailscale.com/app-connectors": [
+							{"name": "my-app", "domains": ["example.com"], "connectors": ["tag:connector"]}
+						]
+					}
+				}]
+			}`,
+			nodeIdx: 0,
+			wantCaps: map[tailcfg.NodeCapability]int{
+				"tailscale.com/app-connectors": 1,
+			},
+		},
+		{
+			name: "app-caps-for-specific-ip",
+			pol: `{
+				"nodeAttrs": [{
+					"target": ["100.64.0.1"],
+					"app": {
+						"tailscale.com/app-connectors": [
+							{"name": "app1", "domains": ["a.com"]}
+						]
+					}
+				}]
+			}`,
+			nodeIdx:  1, // node2 should NOT match
+			wantCaps: nil,
+		},
+		{
+			name: "multiple-app-entries",
+			pol: `{
+				"nodeAttrs": [
+					{
+						"target": ["*"],
+						"app": {
+							"tailscale.com/app-connectors": [
+								{"name": "app1", "domains": ["a.com"]},
+								{"name": "app2", "domains": ["b.com"]}
+							]
+						}
+					}
+				]
+			}`,
+			nodeIdx: 0,
+			wantCaps: map[tailcfg.NodeCapability]int{
+				"tailscale.com/app-connectors": 2,
+			},
+		},
+		{
+			name: "merged-from-multiple-rules",
+			pol: `{
+				"nodeAttrs": [
+					{
+						"target": ["*"],
+						"app": {
+							"tailscale.com/app-connectors": [
+								{"name": "app1", "domains": ["a.com"]}
+							]
+						}
+					},
+					{
+						"target": ["100.64.0.1"],
+						"app": {
+							"tailscale.com/app-connectors": [
+								{"name": "app2", "domains": ["b.com"]}
+							]
+						}
+					}
+				]
+			}`,
+			nodeIdx: 0,
+			wantCaps: map[tailcfg.NodeCapability]int{
+				"tailscale.com/app-connectors": 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm, err := NewPolicyManager([]byte(tt.pol), users, nodes.ViewSlice())
+			require.NoError(t, err)
+
+			caps := pm.NodeAppCapsForNode(nodes[tt.nodeIdx].View())
+
+			if tt.wantCaps == nil {
+				require.Nil(t, caps)
+				return
+			}
+
+			require.NotNil(t, caps)
+			for wantCap, wantCount := range tt.wantCaps {
+				msgs, ok := caps[wantCap]
+				require.True(t, ok, "expected capability %s", wantCap)
+				require.Len(t, msgs, wantCount, "capability %s value count", wantCap)
+
+				// Verify each message is valid JSON
+				for _, msg := range msgs {
+					require.True(t, len(msg) > 0, "message should not be empty")
+				}
+			}
+		})
+	}
+}

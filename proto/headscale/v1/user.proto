@@ -13,6 +13,8 @@ message User {
   string provider_id = 6;
   string provider = 7;
   string profile_pic_url = 8;
+  // Role controls access level: "admin", "network_admin", "it_admin", "member", "service_account".
+  string role = 9;
 }
 
 message CreateUserRequest {
@@ -42,3 +44,20 @@ message ListUsersRequest {
 }
 
 message ListUsersResponse { repeated User users = 1; }
+
+// SetUserRole changes a user's role (admin/network_admin/it_admin/member/service_account).
+message SetUserRoleRequest {
+  uint64 id = 1;
+  string role = 2;
+}
+
+message SetUserRoleResponse { User user = 1; }
+
+// SetUserCredentials creates or updates local auth credentials for a user.
+// This allows the user to log in to the web UI with a password.
+message SetUserCredentialsRequest {
+  uint64 user_id = 1;
+  string password = 2;
+}
+
+message SetUserCredentialsResponse {}

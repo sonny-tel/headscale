@@ -67,7 +67,7 @@ func TestReadConfig(t *testing.T) {
 					return nil, err
 				}
 
-				return dnsToTailcfgDNS(dns), nil
+				return DNSToTailcfgDNS(dns), nil
 			},
 			want: &tailcfg.DNSConfig{
 				Proxied: true,
@@ -133,7 +133,7 @@ func TestReadConfig(t *testing.T) {
 					return nil, err
 				}
 
-				return dnsToTailcfgDNS(dns), nil
+				return DNSToTailcfgDNS(dns), nil
 			},
 			want: &tailcfg.DNSConfig{
 				Proxied: false,
@@ -206,7 +206,7 @@ func TestReadConfig(t *testing.T) {
 					return nil, err
 				}
 
-				return dnsToTailcfgDNS(dns), nil
+				return DNSToTailcfgDNS(dns), nil
 			},
 			want: &tailcfg.DNSConfig{
 				Proxied: true,

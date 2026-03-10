@@ -1,6 +1,7 @@
 package v2
 
 import (
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -1657,9 +1658,15 @@ type Policy struct {
 // NodeAttrRule maps target nodes to a set of capability attributes.
 // Targets use the same syntax as ACL sources/destinations: IPs, CIDRs,
 // tags, users, groups, autogroups, or "*" for all nodes.
+//
+// The optional App field holds structured capability data (e.g.
+// "tailscale.com/app-connectors") that is injected into the
+// node's CapMap with full JSON payloads, as opposed to Attr which
+// only sets empty capabilities.
 type NodeAttrRule struct {
-	Target Aliases  `json:"target"`
-	Attr   []string `json:"attr"`
+	Target Aliases                         `json:"target"`
+	Attr   []string                        `json:"attr,omitempty"`
+	App    map[string][]stdjson.RawMessage `json:"app,omitempty"`
 }
 
 // MarshalJSON is deliberately not implemented for Policy.

@@ -115,6 +115,7 @@ func (v UserView) ProviderIdentifier() sql.NullString { return v.ж.ProviderIden
 // same as RegistrationMethod, without authkey.
 func (v UserView) Provider() string      { return v.ж.Provider }
 func (v UserView) ProfilePicURL() string { return v.ж.ProfilePicURL }
+func (v UserView) Role() string          { return v.ж.Role }
 
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _UserViewNeedsRegeneration = User(struct {
@@ -125,6 +126,7 @@ var _UserViewNeedsRegeneration = User(struct {
 	ProviderIdentifier sql.NullString
 	Provider           string
 	ProfilePicURL      string
+	Role               string
 }{})
 
 // View returns a read-only view of Node.

@@ -19,40 +19,53 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HeadscaleService_CreateUser_FullMethodName              = "/headscale.v1.HeadscaleService/CreateUser"
-	HeadscaleService_RenameUser_FullMethodName              = "/headscale.v1.HeadscaleService/RenameUser"
-	HeadscaleService_DeleteUser_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteUser"
-	HeadscaleService_ListUsers_FullMethodName               = "/headscale.v1.HeadscaleService/ListUsers"
-	HeadscaleService_CreatePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
-	HeadscaleService_ExpirePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
-	HeadscaleService_DeletePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
-	HeadscaleService_ListPreAuthKeys_FullMethodName         = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
-	HeadscaleService_DebugCreateNode_FullMethodName         = "/headscale.v1.HeadscaleService/DebugCreateNode"
-	HeadscaleService_GetNode_FullMethodName                 = "/headscale.v1.HeadscaleService/GetNode"
-	HeadscaleService_SetTags_FullMethodName                 = "/headscale.v1.HeadscaleService/SetTags"
-	HeadscaleService_SetApprovedRoutes_FullMethodName       = "/headscale.v1.HeadscaleService/SetApprovedRoutes"
-	HeadscaleService_RegisterNode_FullMethodName            = "/headscale.v1.HeadscaleService/RegisterNode"
-	HeadscaleService_DeleteNode_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteNode"
-	HeadscaleService_ExpireNode_FullMethodName              = "/headscale.v1.HeadscaleService/ExpireNode"
-	HeadscaleService_RenameNode_FullMethodName              = "/headscale.v1.HeadscaleService/RenameNode"
-	HeadscaleService_ListNodes_FullMethodName               = "/headscale.v1.HeadscaleService/ListNodes"
-	HeadscaleService_BackfillNodeIPs_FullMethodName         = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
-	HeadscaleService_AuthRegister_FullMethodName            = "/headscale.v1.HeadscaleService/AuthRegister"
-	HeadscaleService_AuthApprove_FullMethodName             = "/headscale.v1.HeadscaleService/AuthApprove"
-	HeadscaleService_AuthReject_FullMethodName              = "/headscale.v1.HeadscaleService/AuthReject"
-	HeadscaleService_CreateApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/CreateApiKey"
-	HeadscaleService_ExpireApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/ExpireApiKey"
-	HeadscaleService_ListApiKeys_FullMethodName             = "/headscale.v1.HeadscaleService/ListApiKeys"
-	HeadscaleService_DeleteApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/DeleteApiKey"
-	HeadscaleService_GetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/GetPolicy"
-	HeadscaleService_SetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/SetPolicy"
-	HeadscaleService_Health_FullMethodName                  = "/headscale.v1.HeadscaleService/Health"
-	HeadscaleService_AddProviderAccount_FullMethodName      = "/headscale.v1.HeadscaleService/AddProviderAccount"
-	HeadscaleService_RemoveProviderAccount_FullMethodName   = "/headscale.v1.HeadscaleService/RemoveProviderAccount"
-	HeadscaleService_ListProviderAccounts_FullMethodName    = "/headscale.v1.HeadscaleService/ListProviderAccounts"
-	HeadscaleService_SyncProviderRelays_FullMethodName      = "/headscale.v1.HeadscaleService/SyncProviderRelays"
-	HeadscaleService_ListProviderRelays_FullMethodName      = "/headscale.v1.HeadscaleService/ListProviderRelays"
-	HeadscaleService_ListProviderAllocations_FullMethodName = "/headscale.v1.HeadscaleService/ListProviderAllocations"
+	HeadscaleService_CreateUser_FullMethodName                 = "/headscale.v1.HeadscaleService/CreateUser"
+	HeadscaleService_RenameUser_FullMethodName                 = "/headscale.v1.HeadscaleService/RenameUser"
+	HeadscaleService_DeleteUser_FullMethodName                 = "/headscale.v1.HeadscaleService/DeleteUser"
+	HeadscaleService_ListUsers_FullMethodName                  = "/headscale.v1.HeadscaleService/ListUsers"
+	HeadscaleService_CreatePreAuthKey_FullMethodName           = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
+	HeadscaleService_ExpirePreAuthKey_FullMethodName           = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
+	HeadscaleService_DeletePreAuthKey_FullMethodName           = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
+	HeadscaleService_ListPreAuthKeys_FullMethodName            = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
+	HeadscaleService_DebugCreateNode_FullMethodName            = "/headscale.v1.HeadscaleService/DebugCreateNode"
+	HeadscaleService_GetNode_FullMethodName                    = "/headscale.v1.HeadscaleService/GetNode"
+	HeadscaleService_SetTags_FullMethodName                    = "/headscale.v1.HeadscaleService/SetTags"
+	HeadscaleService_SetApprovedRoutes_FullMethodName          = "/headscale.v1.HeadscaleService/SetApprovedRoutes"
+	HeadscaleService_RegisterNode_FullMethodName               = "/headscale.v1.HeadscaleService/RegisterNode"
+	HeadscaleService_DeleteNode_FullMethodName                 = "/headscale.v1.HeadscaleService/DeleteNode"
+	HeadscaleService_ExpireNode_FullMethodName                 = "/headscale.v1.HeadscaleService/ExpireNode"
+	HeadscaleService_RenameNode_FullMethodName                 = "/headscale.v1.HeadscaleService/RenameNode"
+	HeadscaleService_ListNodes_FullMethodName                  = "/headscale.v1.HeadscaleService/ListNodes"
+	HeadscaleService_BackfillNodeIPs_FullMethodName            = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
+	HeadscaleService_AuthRegister_FullMethodName               = "/headscale.v1.HeadscaleService/AuthRegister"
+	HeadscaleService_AuthApprove_FullMethodName                = "/headscale.v1.HeadscaleService/AuthApprove"
+	HeadscaleService_AuthReject_FullMethodName                 = "/headscale.v1.HeadscaleService/AuthReject"
+	HeadscaleService_LoginWithPassword_FullMethodName          = "/headscale.v1.HeadscaleService/LoginWithPassword"
+	HeadscaleService_SetupOTP_FullMethodName                   = "/headscale.v1.HeadscaleService/SetupOTP"
+	HeadscaleService_VerifyOTP_FullMethodName                  = "/headscale.v1.HeadscaleService/VerifyOTP"
+	HeadscaleService_ChangePassword_FullMethodName             = "/headscale.v1.HeadscaleService/ChangePassword"
+	HeadscaleService_GetGitHubAuthURL_FullMethodName           = "/headscale.v1.HeadscaleService/GetGitHubAuthURL"
+	HeadscaleService_GitHubCallback_FullMethodName             = "/headscale.v1.HeadscaleService/GitHubCallback"
+	HeadscaleService_ValidateSession_FullMethodName            = "/headscale.v1.HeadscaleService/ValidateSession"
+	HeadscaleService_RefreshSession_FullMethodName             = "/headscale.v1.HeadscaleService/RefreshSession"
+	HeadscaleService_WebAuthLogout_FullMethodName              = "/headscale.v1.HeadscaleService/WebAuthLogout"
+	HeadscaleService_GetRegistrationAuthMethods_FullMethodName = "/headscale.v1.HeadscaleService/GetRegistrationAuthMethods"
+	HeadscaleService_ApproveRegistration_FullMethodName        = "/headscale.v1.HeadscaleService/ApproveRegistration"
+	HeadscaleService_SetUserRole_FullMethodName                = "/headscale.v1.HeadscaleService/SetUserRole"
+	HeadscaleService_SetUserCredentials_FullMethodName         = "/headscale.v1.HeadscaleService/SetUserCredentials"
+	HeadscaleService_CreateApiKey_FullMethodName               = "/headscale.v1.HeadscaleService/CreateApiKey"
+	HeadscaleService_ExpireApiKey_FullMethodName               = "/headscale.v1.HeadscaleService/ExpireApiKey"
+	HeadscaleService_ListApiKeys_FullMethodName                = "/headscale.v1.HeadscaleService/ListApiKeys"
+	HeadscaleService_DeleteApiKey_FullMethodName               = "/headscale.v1.HeadscaleService/DeleteApiKey"
+	HeadscaleService_GetPolicy_FullMethodName                  = "/headscale.v1.HeadscaleService/GetPolicy"
+	HeadscaleService_SetPolicy_FullMethodName                  = "/headscale.v1.HeadscaleService/SetPolicy"
+	HeadscaleService_Health_FullMethodName                     = "/headscale.v1.HeadscaleService/Health"
+	HeadscaleService_AddProviderAccount_FullMethodName         = "/headscale.v1.HeadscaleService/AddProviderAccount"
+	HeadscaleService_RemoveProviderAccount_FullMethodName      = "/headscale.v1.HeadscaleService/RemoveProviderAccount"
+	HeadscaleService_ListProviderAccounts_FullMethodName       = "/headscale.v1.HeadscaleService/ListProviderAccounts"
+	HeadscaleService_SyncProviderRelays_FullMethodName         = "/headscale.v1.HeadscaleService/SyncProviderRelays"
+	HeadscaleService_ListProviderRelays_FullMethodName         = "/headscale.v1.HeadscaleService/ListProviderRelays"
+	HeadscaleService_ListProviderAllocations_FullMethodName    = "/headscale.v1.HeadscaleService/ListProviderAllocations"
 )
 
 // HeadscaleServiceClient is the client API for HeadscaleService service.
@@ -84,6 +97,21 @@ type HeadscaleServiceClient interface {
 	AuthRegister(ctx context.Context, in *AuthRegisterRequest, opts ...grpc.CallOption) (*AuthRegisterResponse, error)
 	AuthApprove(ctx context.Context, in *AuthApproveRequest, opts ...grpc.CallOption) (*AuthApproveResponse, error)
 	AuthReject(ctx context.Context, in *AuthRejectRequest, opts ...grpc.CallOption) (*AuthRejectResponse, error)
+	// --- Web Auth start ---
+	LoginWithPassword(ctx context.Context, in *LoginWithPasswordRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+	SetupOTP(ctx context.Context, in *SetupOTPRequest, opts ...grpc.CallOption) (*SetupOTPResponse, error)
+	VerifyOTP(ctx context.Context, in *VerifyOTPRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+	ChangePassword(ctx context.Context, in *ChangePasswordRequest, opts ...grpc.CallOption) (*ChangePasswordResponse, error)
+	GetGitHubAuthURL(ctx context.Context, in *GetGitHubAuthURLRequest, opts ...grpc.CallOption) (*GetGitHubAuthURLResponse, error)
+	GitHubCallback(ctx context.Context, in *GitHubCallbackRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+	ValidateSession(ctx context.Context, in *ValidateSessionRequest, opts ...grpc.CallOption) (*ValidateSessionResponse, error)
+	RefreshSession(ctx context.Context, in *RefreshSessionRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+	WebAuthLogout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
+	GetRegistrationAuthMethods(ctx context.Context, in *GetRegistrationAuthMethodsRequest, opts ...grpc.CallOption) (*GetRegistrationAuthMethodsResponse, error)
+	ApproveRegistration(ctx context.Context, in *ApproveRegistrationRequest, opts ...grpc.CallOption) (*ApproveRegistrationResponse, error)
+	// --- User Role & Credentials start ---
+	SetUserRole(ctx context.Context, in *SetUserRoleRequest, opts ...grpc.CallOption) (*SetUserRoleResponse, error)
+	SetUserCredentials(ctx context.Context, in *SetUserCredentialsRequest, opts ...grpc.CallOption) (*SetUserCredentialsResponse, error)
 	// --- ApiKeys start ---
 	CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error)
 	ExpireApiKey(ctx context.Context, in *ExpireApiKeyRequest, opts ...grpc.CallOption) (*ExpireApiKeyResponse, error)
@@ -321,6 +349,136 @@ func (c *headscaleServiceClient) AuthReject(ctx context.Context, in *AuthRejectR
 	return out, nil
 }
 
+func (c *headscaleServiceClient) LoginWithPassword(ctx context.Context, in *LoginWithPasswordRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_LoginWithPassword_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) SetupOTP(ctx context.Context, in *SetupOTPRequest, opts ...grpc.CallOption) (*SetupOTPResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetupOTPResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_SetupOTP_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) VerifyOTP(ctx context.Context, in *VerifyOTPRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_VerifyOTP_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ChangePassword(ctx context.Context, in *ChangePasswordRequest, opts ...grpc.CallOption) (*ChangePasswordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChangePasswordResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ChangePassword_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) GetGitHubAuthURL(ctx context.Context, in *GetGitHubAuthURLRequest, opts ...grpc.CallOption) (*GetGitHubAuthURLResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGitHubAuthURLResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_GetGitHubAuthURL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) GitHubCallback(ctx context.Context, in *GitHubCallbackRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_GitHubCallback_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ValidateSession(ctx context.Context, in *ValidateSessionRequest, opts ...grpc.CallOption) (*ValidateSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateSessionResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ValidateSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) RefreshSession(ctx context.Context, in *RefreshSessionRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_RefreshSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) WebAuthLogout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogoutResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_WebAuthLogout_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) GetRegistrationAuthMethods(ctx context.Context, in *GetRegistrationAuthMethodsRequest, opts ...grpc.CallOption) (*GetRegistrationAuthMethodsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRegistrationAuthMethodsResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_GetRegistrationAuthMethods_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) ApproveRegistration(ctx context.Context, in *ApproveRegistrationRequest, opts ...grpc.CallOption) (*ApproveRegistrationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApproveRegistrationResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_ApproveRegistration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) SetUserRole(ctx context.Context, in *SetUserRoleRequest, opts ...grpc.CallOption) (*SetUserRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetUserRoleResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_SetUserRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *headscaleServiceClient) SetUserCredentials(ctx context.Context, in *SetUserCredentialsRequest, opts ...grpc.CallOption) (*SetUserCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetUserCredentialsResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_SetUserCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *headscaleServiceClient) CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateApiKeyResponse)
@@ -480,6 +638,21 @@ type HeadscaleServiceServer interface {
 	AuthRegister(context.Context, *AuthRegisterRequest) (*AuthRegisterResponse, error)
 	AuthApprove(context.Context, *AuthApproveRequest) (*AuthApproveResponse, error)
 	AuthReject(context.Context, *AuthRejectRequest) (*AuthRejectResponse, error)
+	// --- Web Auth start ---
+	LoginWithPassword(context.Context, *LoginWithPasswordRequest) (*LoginResponse, error)
+	SetupOTP(context.Context, *SetupOTPRequest) (*SetupOTPResponse, error)
+	VerifyOTP(context.Context, *VerifyOTPRequest) (*LoginResponse, error)
+	ChangePassword(context.Context, *ChangePasswordRequest) (*ChangePasswordResponse, error)
+	GetGitHubAuthURL(context.Context, *GetGitHubAuthURLRequest) (*GetGitHubAuthURLResponse, error)
+	GitHubCallback(context.Context, *GitHubCallbackRequest) (*LoginResponse, error)
+	ValidateSession(context.Context, *ValidateSessionRequest) (*ValidateSessionResponse, error)
+	RefreshSession(context.Context, *RefreshSessionRequest) (*LoginResponse, error)
+	WebAuthLogout(context.Context, *LogoutRequest) (*LogoutResponse, error)
+	GetRegistrationAuthMethods(context.Context, *GetRegistrationAuthMethodsRequest) (*GetRegistrationAuthMethodsResponse, error)
+	ApproveRegistration(context.Context, *ApproveRegistrationRequest) (*ApproveRegistrationResponse, error)
+	// --- User Role & Credentials start ---
+	SetUserRole(context.Context, *SetUserRoleRequest) (*SetUserRoleResponse, error)
+	SetUserCredentials(context.Context, *SetUserCredentialsRequest) (*SetUserCredentialsResponse, error)
 	// --- ApiKeys start ---
 	CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error)
 	ExpireApiKey(context.Context, *ExpireApiKeyRequest) (*ExpireApiKeyResponse, error)
@@ -569,6 +742,45 @@ func (UnimplementedHeadscaleServiceServer) AuthApprove(context.Context, *AuthApp
 }
 func (UnimplementedHeadscaleServiceServer) AuthReject(context.Context, *AuthRejectRequest) (*AuthRejectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AuthReject not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) LoginWithPassword(context.Context, *LoginWithPasswordRequest) (*LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LoginWithPassword not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) SetupOTP(context.Context, *SetupOTPRequest) (*SetupOTPResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetupOTP not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) VerifyOTP(context.Context, *VerifyOTPRequest) (*LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyOTP not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ChangePassword(context.Context, *ChangePasswordRequest) (*ChangePasswordResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChangePassword not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) GetGitHubAuthURL(context.Context, *GetGitHubAuthURLRequest) (*GetGitHubAuthURLResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGitHubAuthURL not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) GitHubCallback(context.Context, *GitHubCallbackRequest) (*LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GitHubCallback not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ValidateSession(context.Context, *ValidateSessionRequest) (*ValidateSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ValidateSession not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) RefreshSession(context.Context, *RefreshSessionRequest) (*LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RefreshSession not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) WebAuthLogout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WebAuthLogout not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) GetRegistrationAuthMethods(context.Context, *GetRegistrationAuthMethodsRequest) (*GetRegistrationAuthMethodsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRegistrationAuthMethods not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) ApproveRegistration(context.Context, *ApproveRegistrationRequest) (*ApproveRegistrationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApproveRegistration not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) SetUserRole(context.Context, *SetUserRoleRequest) (*SetUserRoleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetUserRole not implemented")
+}
+func (UnimplementedHeadscaleServiceServer) SetUserCredentials(context.Context, *SetUserCredentialsRequest) (*SetUserCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetUserCredentials not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateApiKey not implemented")
@@ -1008,6 +1220,240 @@ func _HeadscaleService_AuthReject_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_LoginWithPassword_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoginWithPasswordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).LoginWithPassword(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_LoginWithPassword_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).LoginWithPassword(ctx, req.(*LoginWithPasswordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_SetupOTP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetupOTPRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).SetupOTP(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_SetupOTP_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).SetupOTP(ctx, req.(*SetupOTPRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_VerifyOTP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyOTPRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).VerifyOTP(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_VerifyOTP_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).VerifyOTP(ctx, req.(*VerifyOTPRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ChangePassword_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangePasswordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ChangePassword(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ChangePassword_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ChangePassword(ctx, req.(*ChangePasswordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_GetGitHubAuthURL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGitHubAuthURLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).GetGitHubAuthURL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_GetGitHubAuthURL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).GetGitHubAuthURL(ctx, req.(*GetGitHubAuthURLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_GitHubCallback_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GitHubCallbackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).GitHubCallback(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_GitHubCallback_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).GitHubCallback(ctx, req.(*GitHubCallbackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ValidateSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ValidateSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ValidateSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ValidateSession(ctx, req.(*ValidateSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_RefreshSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).RefreshSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_RefreshSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).RefreshSession(ctx, req.(*RefreshSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_WebAuthLogout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).WebAuthLogout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_WebAuthLogout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).WebAuthLogout(ctx, req.(*LogoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_GetRegistrationAuthMethods_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRegistrationAuthMethodsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).GetRegistrationAuthMethods(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_GetRegistrationAuthMethods_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).GetRegistrationAuthMethods(ctx, req.(*GetRegistrationAuthMethodsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_ApproveRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveRegistrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).ApproveRegistration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_ApproveRegistration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).ApproveRegistration(ctx, req.(*ApproveRegistrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_SetUserRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetUserRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).SetUserRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_SetUserRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).SetUserRole(ctx, req.(*SetUserRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HeadscaleService_SetUserCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetUserCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).SetUserCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_SetUserCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).SetUserCredentials(ctx, req.(*SetUserCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HeadscaleService_CreateApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateApiKeyRequest)
 	if err := dec(in); err != nil {
@@ -1332,6 +1778,58 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AuthReject",
 			Handler:    _HeadscaleService_AuthReject_Handler,
+		},
+		{
+			MethodName: "LoginWithPassword",
+			Handler:    _HeadscaleService_LoginWithPassword_Handler,
+		},
+		{
+			MethodName: "SetupOTP",
+			Handler:    _HeadscaleService_SetupOTP_Handler,
+		},
+		{
+			MethodName: "VerifyOTP",
+			Handler:    _HeadscaleService_VerifyOTP_Handler,
+		},
+		{
+			MethodName: "ChangePassword",
+			Handler:    _HeadscaleService_ChangePassword_Handler,
+		},
+		{
+			MethodName: "GetGitHubAuthURL",
+			Handler:    _HeadscaleService_GetGitHubAuthURL_Handler,
+		},
+		{
+			MethodName: "GitHubCallback",
+			Handler:    _HeadscaleService_GitHubCallback_Handler,
+		},
+		{
+			MethodName: "ValidateSession",
+			Handler:    _HeadscaleService_ValidateSession_Handler,
+		},
+		{
+			MethodName: "RefreshSession",
+			Handler:    _HeadscaleService_RefreshSession_Handler,
+		},
+		{
+			MethodName: "WebAuthLogout",
+			Handler:    _HeadscaleService_WebAuthLogout_Handler,
+		},
+		{
+			MethodName: "GetRegistrationAuthMethods",
+			Handler:    _HeadscaleService_GetRegistrationAuthMethods_Handler,
+		},
+		{
+			MethodName: "ApproveRegistration",
+			Handler:    _HeadscaleService_ApproveRegistration_Handler,
+		},
+		{
+			MethodName: "SetUserRole",
+			Handler:    _HeadscaleService_SetUserRole_Handler,
+		},
+		{
+			MethodName: "SetUserCredentials",
+			Handler:    _HeadscaleService_SetUserCredentials_Handler,
 		},
 		{
 			MethodName: "CreateApiKey",

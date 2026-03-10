@@ -12,6 +12,7 @@ CREATE TABLE users(
   provider_identifier text,
   provider text,
   profile_pic_url text,
+  role text NOT NULL DEFAULT 'member',
 
   created_at datetime,
   updated_at datetime,
@@ -119,6 +120,16 @@ CREATE TABLE policies(
 );
 CREATE INDEX idx_policies_deleted_at ON policies(deleted_at);
 
+CREATE TABLE runtime_dns_configs(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  data text,
+
+  created_at datetime,
+  updated_at datetime,
+  deleted_at datetime
+);
+CREATE INDEX idx_runtime_dns_configs_deleted_at ON runtime_dns_configs(deleted_at);
+
 CREATE TABLE vpn_provider_accounts(
   id integer PRIMARY KEY AUTOINCREMENT,
   provider_name text NOT NULL,
@@ -149,3 +160,40 @@ CREATE TABLE database_versions(
   version text NOT NULL,
   updated_at datetime
 );
+
+CREATE TABLE user_credentials(
+  user_id integer PRIMARY KEY,
+  password_hash text,
+  otp_secret text,
+  otp_enabled numeric NOT NULL DEFAULT false,
+  git_hub_id text,
+  git_hub_login text,
+  failed_login_attempts integer NOT NULL DEFAULT 0,
+  locked_until datetime,
+  created_at datetime,
+  updated_at datetime,
+  CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX idx_user_credentials_github_id ON user_credentials(git_hub_id) WHERE git_hub_id IS NOT NULL AND git_hub_id != '';
+
+CREATE TABLE user_sessions(
+  id text PRIMARY KEY,
+  user_id integer NOT NULL,
+  expires_at datetime NOT NULL,
+  created_at datetime,
+  ip_address text,
+  user_agent text,
+  CONSTRAINT fk_user_sessions_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE audit_events(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  timestamp datetime NOT NULL,
+  event_type text NOT NULL,
+  actor text NOT NULL DEFAULT '',
+  target_type text DEFAULT '',
+  target_name text DEFAULT '',
+  details text DEFAULT ''
+);
+CREATE INDEX idx_audit_events_timestamp ON audit_events(timestamp);
+CREATE INDEX idx_audit_events_event_type ON audit_events(event_type);

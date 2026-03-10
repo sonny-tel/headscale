@@ -124,6 +124,25 @@ func (hsdb *HSDatabase) GetUserByID(uid types.UserID) (*types.User, error) {
 	return GetUserByID(hsdb.DB, uid)
 }
 
+// UpdateUserProfile updates a user's display name and profile picture URL.
+func (hsdb *HSDatabase) UpdateUserProfile(uid types.UserID, displayName string, profilePicURL string) (*types.User, error) {
+	var user *types.User
+	err := hsdb.Write(func(tx *gorm.DB) error {
+		u, err := GetUserByID(tx, uid)
+		if err != nil {
+			return err
+		}
+		u.DisplayName = displayName
+		u.ProfilePicURL = profilePicURL
+		if err := tx.Save(u).Error; err != nil {
+			return err
+		}
+		user = u
+		return nil
+	})
+	return user, err
+}
+
 func GetUserByID(tx *gorm.DB, uid types.UserID) (*types.User, error) {
 	user := types.User{}
 	if result := tx.First(&user, "id = ?", uid); errors.Is(

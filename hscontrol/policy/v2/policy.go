@@ -858,6 +858,48 @@ func (pm *PolicyManager) NodeAttrsForNode(node types.NodeView) []string {
 	return attrs
 }
 
+// NodeAppCapsForNode evaluates all nodeAttrs rules in the policy and returns
+// a NodeCapMap containing the structured app capabilities that apply to the
+// given node. This handles the "app" field of nodeAttrs rules, which carries
+// rich JSON payloads (e.g. app-connector configuration) as opposed to the
+// simple string attributes returned by NodeAttrsForNode.
+func (pm *PolicyManager) NodeAppCapsForNode(node types.NodeView) tailcfg.NodeCapMap {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if pm.pol == nil || len(pm.pol.NodeAttrs) == 0 {
+		return nil
+	}
+
+	var caps tailcfg.NodeCapMap
+
+	for _, rule := range pm.pol.NodeAttrs {
+		if len(rule.App) == 0 {
+			continue
+		}
+
+		ipSet, err := rule.Target.Resolve(pm.pol, pm.users, pm.nodes)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to resolve nodeAttrs target for app caps")
+			continue
+		}
+
+		if node.InIPSet(ipSet) {
+			if caps == nil {
+				caps = make(tailcfg.NodeCapMap)
+			}
+			for capName, msgs := range rule.App {
+				cap := tailcfg.NodeCapability(capName)
+				for _, msg := range msgs {
+					caps[cap] = append(caps[cap], tailcfg.RawMessage(string(msg)))
+				}
+			}
+		}
+	}
+
+	return caps
+}
+
 func (pm *PolicyManager) DebugString() string {
 	if pm == nil {
 		return "PolicyManager is not setup"

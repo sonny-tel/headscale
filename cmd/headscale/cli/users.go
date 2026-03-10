@@ -59,6 +59,8 @@ func init() {
 	usernameAndIDFlag(renameUserCmd)
 	renameUserCmd.Flags().StringP("new-name", "r", "", "New username")
 	mustMarkRequired(renameUserCmd, "new-name")
+	userCmd.AddCommand(approveUserCmd)
+	usernameAndIDFlag(approveUserCmd)
 }
 
 var userCmd = &cobra.Command{
@@ -239,5 +241,48 @@ var renameUserCmd = &cobra.Command{
 		}
 
 		return printOutput(cmd, response.GetUser(), "User renamed")
+	}),
+}
+
+var approveUserCmd = &cobra.Command{
+	Use:   "approve",
+	Short: "Approves a pending user (sets role from pending to member)",
+	RunE: grpcRunE(func(ctx context.Context, client v1.HeadscaleServiceClient, cmd *cobra.Command, args []string) error {
+		id, username, err := usernameAndIDFromFlag(cmd)
+		if err != nil {
+			return err
+		}
+
+		listReq := &v1.ListUsersRequest{
+			Name: username,
+			Id:   id,
+		}
+
+		users, err := client.ListUsers(ctx, listReq)
+		if err != nil {
+			return fmt.Errorf("listing users: %w", err)
+		}
+
+		if len(users.GetUsers()) != 1 {
+			return errMultipleUsersMatch
+		}
+
+		user := users.GetUsers()[0]
+
+		if user.GetRole() != "pending" {
+			return fmt.Errorf("user %q is not pending (current role: %s)", user.GetName(), user.GetRole())
+		}
+
+		roleReq := &v1.SetUserRoleRequest{
+			Id:   user.GetId(),
+			Role: "member",
+		}
+
+		response, err := client.SetUserRole(ctx, roleReq)
+		if err != nil {
+			return fmt.Errorf("approving user: %w", err)
+		}
+
+		return printOutput(cmd, response.GetUser(), "User approved")
 	}),
 }

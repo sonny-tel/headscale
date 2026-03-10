@@ -1069,6 +1069,46 @@
         ]
       }
     },
+    "/api/v1/user/{id}/role": {
+      "post": {
+        "summary": "--- User Role \u0026 Credentials start ---",
+        "operationId": "HeadscaleService_SetUserRole",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetUserRoleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceSetUserRoleBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
     "/api/v1/user/{oldId}/rename/{newName}": {
       "post": {
         "operationId": "HeadscaleService_RenameUser",
@@ -1105,9 +1145,362 @@
           "HeadscaleService"
         ]
       }
+    },
+    "/api/v1/user/{userId}/credentials": {
+      "post": {
+        "operationId": "HeadscaleService_SetUserCredentials",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetUserCredentialsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceSetUserCredentialsBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/github": {
+      "get": {
+        "operationId": "HeadscaleService_GetGitHubAuthURL",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetGitHubAuthURLResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/github/callback": {
+      "get": {
+        "operationId": "HeadscaleService_GitHubCallback",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/login": {
+      "post": {
+        "summary": "--- Web Auth start ---",
+        "operationId": "HeadscaleService_LoginWithPassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1LoginWithPasswordRequest"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/logout": {
+      "post": {
+        "operationId": "HeadscaleService_WebAuthLogout",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LogoutResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/otp/setup": {
+      "post": {
+        "operationId": "HeadscaleService_SetupOTP",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetupOTPResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/otp/verify": {
+      "post": {
+        "operationId": "HeadscaleService_VerifyOTP",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1VerifyOTPRequest"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/password/change": {
+      "post": {
+        "operationId": "HeadscaleService_ChangePassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ChangePasswordResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1ChangePasswordRequest"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/registration/{authId}/approve": {
+      "post": {
+        "operationId": "HeadscaleService_ApproveRegistration",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ApproveRegistrationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "authId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HeadscaleServiceApproveRegistrationBody"
+            }
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/registration/{authId}/methods": {
+      "get": {
+        "operationId": "HeadscaleService_GetRegistrationAuthMethods",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRegistrationAuthMethodsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "authId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/session": {
+      "get": {
+        "operationId": "HeadscaleService_ValidateSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ValidateSessionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
+    },
+    "/api/v1/webauth/session/refresh": {
+      "post": {
+        "operationId": "HeadscaleService_RefreshSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "HeadscaleService"
+        ]
+      }
     }
   },
   "definitions": {
+    "HeadscaleServiceApproveRegistrationBody": {
+      "type": "object"
+    },
     "HeadscaleServiceSetApprovedRoutesBody": {
       "type": "object",
       "properties": {
@@ -1129,6 +1522,24 @@
           }
         }
       }
+    },
+    "HeadscaleServiceSetUserCredentialsBody": {
+      "type": "object",
+      "properties": {
+        "password": {
+          "type": "string"
+        }
+      },
+      "description": "SetUserCredentials creates or updates local auth credentials for a user.\nThis allows the user to log in to the web UI with a password."
+    },
+    "HeadscaleServiceSetUserRoleBody": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        }
+      },
+      "description": "SetUserRole changes a user's role (owner/admin/member/service_account)."
     },
     "protobufAny": {
       "type": "object",
@@ -1205,6 +1616,9 @@
         }
       }
     },
+    "v1ApproveRegistrationResponse": {
+      "type": "object"
+    },
     "v1AuthApproveRequest": {
       "type": "object",
       "properties": {
@@ -1256,6 +1670,20 @@
           }
         }
       }
+    },
+    "v1ChangePasswordRequest": {
+      "type": "object",
+      "properties": {
+        "currentPassword": {
+          "type": "string"
+        },
+        "newPassword": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ChangePasswordResponse": {
+      "type": "object"
     },
     "v1CreateApiKeyRequest": {
       "type": "object",
@@ -1407,6 +1835,14 @@
     "v1ExpirePreAuthKeyResponse": {
       "type": "object"
     },
+    "v1GetGitHubAuthURLResponse": {
+      "type": "object",
+      "properties": {
+        "authUrl": {
+          "type": "string"
+        }
+      }
+    },
     "v1GetNodeResponse": {
       "type": "object",
       "properties": {
@@ -1424,6 +1860,17 @@
         "updatedAt": {
           "type": "string",
           "format": "date-time"
+        }
+      }
+    },
+    "v1GetRegistrationAuthMethodsResponse": {
+      "type": "object",
+      "properties": {
+        "localAuthEnabled": {
+          "type": "boolean"
+        },
+        "githubAuthEnabled": {
+          "type": "boolean"
         }
       }
     },
@@ -1542,6 +1989,38 @@
           }
         }
       }
+    },
+    "v1LoginResponse": {
+      "type": "object",
+      "properties": {
+        "sessionToken": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "otpRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1LoginWithPasswordRequest": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        }
+      }
+    },
+    "v1LogoutResponse": {
+      "type": "object"
     },
     "v1Node": {
       "type": "object",
@@ -1835,6 +2314,28 @@
         }
       }
     },
+    "v1SetUserCredentialsResponse": {
+      "type": "object"
+    },
+    "v1SetUserRoleResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        }
+      }
+    },
+    "v1SetupOTPResponse": {
+      "type": "object",
+      "properties": {
+        "secret": {
+          "type": "string"
+        },
+        "otpUrl": {
+          "type": "string"
+        }
+      }
+    },
     "v1SyncProviderRelaysRequest": {
       "type": "object",
       "properties": {
@@ -1879,6 +2380,30 @@
           "type": "string"
         },
         "profilePicUrl": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "description": "Role controls access level: \"owner\", \"admin\", \"member\", \"service_account\"."
+        }
+      }
+    },
+    "v1ValidateSessionResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1VerifyOTPRequest": {
+      "type": "object",
+      "properties": {
+        "code": {
           "type": "string"
         }
       }

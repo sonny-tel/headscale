@@ -286,6 +286,7 @@ func TestTailNode(t *testing.T) {
 				},
 				cfg,
 				nil,
+				nil,
 			)
 
 			if (err != nil) != tt.wantErr {
@@ -342,6 +343,7 @@ func TestNodeExpiry(t *testing.T) {
 					return []netip.Prefix{}
 				},
 				&types.Config{Taildrop: types.TaildropConfig{Enabled: true}},
+				nil,
 				nil,
 			)
 			if err != nil {

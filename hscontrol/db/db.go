@@ -876,6 +876,131 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			// As of 2025-07-02, no new IDs should be added here
+			{
+				// Add role column to users table (defaults to "member"),
+				// create user_credentials table for optional local auth,
+				// and user_sessions table for web UI sessions.
+				ID: "202507021200-add-user-auth-tables",
+				Migrate: func(tx *gorm.DB) error {
+					// Add role to existing users table.
+					if err := tx.Exec(
+						`ALTER TABLE users ADD COLUMN role text NOT NULL DEFAULT 'member'`,
+					).Error; err != nil {
+						return fmt.Errorf("adding role to users: %w", err)
+					}
+
+					credSQL := `CREATE TABLE IF NOT EXISTS user_credentials(
+						user_id integer PRIMARY KEY,
+						password_hash text,
+						otp_secret text,
+						otp_enabled numeric NOT NULL DEFAULT false,
+						git_hub_id text,
+						git_hub_login text,
+						failed_login_attempts integer NOT NULL DEFAULT 0,
+						locked_until datetime,
+						created_at datetime,
+						updated_at datetime,
+						CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+					)`
+					if err := tx.Exec(credSQL).Error; err != nil {
+						return fmt.Errorf("creating user_credentials table: %w", err)
+					}
+
+					if err := tx.Exec(
+						`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_credentials_github_id ON user_credentials(git_hub_id) WHERE git_hub_id IS NOT NULL AND git_hub_id != ''`,
+					).Error; err != nil {
+						return fmt.Errorf("creating git_hub_id index: %w", err)
+					}
+
+					sessSQL := `CREATE TABLE IF NOT EXISTS user_sessions(
+						id text PRIMARY KEY,
+						user_id integer NOT NULL,
+						expires_at datetime NOT NULL,
+						created_at datetime,
+						ip_address text,
+						user_agent text,
+						CONSTRAINT fk_user_sessions_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+					)`
+					if err := tx.Exec(sessSQL).Error; err != nil {
+						return fmt.Errorf("creating user_sessions table: %w", err)
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Remove owner role — admin is now the highest privilege.
+				ID: "202507100100-remove-owner-role",
+				Migrate: func(tx *gorm.DB) error {
+					return tx.Exec(`UPDATE users SET role = 'admin' WHERE role = 'owner'`).Error
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Add runtime_dns_configs table for DB-stored DNS overrides.
+				ID: "202507140100-add-runtime-dns-configs",
+				Migrate: func(tx *gorm.DB) error {
+					err := tx.Exec(`CREATE TABLE IF NOT EXISTS runtime_dns_configs(
+						id integer PRIMARY KEY AUTOINCREMENT,
+						data text,
+						created_at datetime,
+						updated_at datetime,
+						deleted_at datetime
+					)`).Error
+					if err != nil {
+						return err
+					}
+					// Drop backtick-quoted index if it exists (from earlier AutoMigrate runs)
+					tx.Exec(`DROP INDEX IF EXISTS "idx_runtime_dns_configs_deleted_at"`)
+					return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_runtime_dns_configs_deleted_at ON runtime_dns_configs(deleted_at)`).Error
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			{
+				// Fix runtime_dns_configs index format (remove backtick-quoted version from AutoMigrate).
+				ID: "202507140101-fix-runtime-dns-configs-index",
+				Migrate: func(tx *gorm.DB) error {
+					tx.Exec(`DROP INDEX IF EXISTS "idx_runtime_dns_configs_deleted_at"`)
+					return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_runtime_dns_configs_deleted_at ON runtime_dns_configs(deleted_at)`).Error
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
+			// As of 2025-07-02, no new IDs should be added here
+			{
+				ID: "202603100100-add-audit-events",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						timestamp datetime NOT NULL,
+						event_type text NOT NULL,
+						actor text NOT NULL DEFAULT '',
+						target_type text DEFAULT '',
+						target_name text DEFAULT '',
+						details text DEFAULT ''
+					)`).Error; err != nil {
+						return err
+					}
+					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)`).Error; err != nil {
+						return err
+					}
+					return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type)`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS audit_events`).Error
+				},
+			},
+			{
+				ID: "202603100200-add-audit-events-indexes",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)`).Error; err != nil {
+						return err
+					}
+					return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type)`).Error
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 
@@ -889,6 +1014,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			&types.APIKey{},
 			&types.Node{},
 			&types.Policy{},
+			&types.RuntimeDNSConfig{},
 		)
 		if err != nil {
 			return err
@@ -928,6 +1054,56 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			}
 		}
 
+		// Create web auth tables with raw SQL to exactly match schema.sql.
+		authTables := []string{
+			`CREATE TABLE IF NOT EXISTS user_credentials(
+				user_id integer PRIMARY KEY,
+				password_hash text,
+				otp_secret text,
+				otp_enabled numeric NOT NULL DEFAULT false,
+				git_hub_id text,
+				git_hub_login text,
+				failed_login_attempts integer NOT NULL DEFAULT 0,
+				locked_until datetime,
+				created_at datetime,
+				updated_at datetime,
+				CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+			)`,
+			`CREATE TABLE IF NOT EXISTS user_sessions(
+				id text PRIMARY KEY,
+				user_id integer NOT NULL,
+				expires_at datetime NOT NULL,
+				created_at datetime,
+				ip_address text,
+				user_agent text,
+				CONSTRAINT fk_user_sessions_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+			)`,
+		}
+		for _, sql := range authTables {
+			if err := tx.Exec(sql).Error; err != nil {
+				return err
+			}
+		}
+
+		// Create audit_events table.
+		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			timestamp datetime NOT NULL,
+			event_type text NOT NULL,
+			actor text NOT NULL DEFAULT '',
+			target_type text DEFAULT '',
+			target_name text DEFAULT '',
+			details text DEFAULT ''
+		)`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type)`).Error; err != nil {
+			return err
+		}
+
 		// Drop all indexes (both GORM-created and potentially pre-existing ones)
 		// to ensure we can recreate them in the correct format
 		dropIndexes := []string{
@@ -938,6 +1114,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			`DROP INDEX IF EXISTS "idx_name_provider_identifier"`,
 			`DROP INDEX IF EXISTS "idx_name_no_provider_identifier"`,
 			`DROP INDEX IF EXISTS "idx_pre_auth_keys_prefix"`,
+			`DROP INDEX IF EXISTS "idx_runtime_dns_configs_deleted_at"`,
 		}
 
 		for _, dropSQL := range dropIndexes {
@@ -956,6 +1133,8 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			`CREATE UNIQUE INDEX idx_name_provider_identifier ON users(name, provider_identifier)`,
 			`CREATE UNIQUE INDEX idx_name_no_provider_identifier ON users(name) WHERE provider_identifier IS NULL`,
 			`CREATE UNIQUE INDEX idx_pre_auth_keys_prefix ON pre_auth_keys(prefix) WHERE prefix IS NOT NULL AND prefix != ''`,
+			`CREATE UNIQUE INDEX idx_user_credentials_github_id ON user_credentials(git_hub_id) WHERE git_hub_id IS NOT NULL AND git_hub_id != ''`,
+			`CREATE INDEX idx_runtime_dns_configs_deleted_at ON runtime_dns_configs(deleted_at)`,
 		}
 
 		for _, indexSQL := range indexes {

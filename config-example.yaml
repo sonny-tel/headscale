@@ -431,9 +431,134 @@ taildrop:
 # Only modify these if you have identified a specific performance issue.
 #
 # tuning:
+#   # Maximum time to wait when sending network-change notifications to
+#   # connected clients. Increase if clients on slow connections time out.
+#   # notifier_send_timeout: 800ms
+#
+#   # How long to wait before sending batched updates when multiple changes
+#   # occur in rapid succession. Lower values = faster propagation but more
+#   # CPU from frequent rebuilds.
+#   # batch_change_delay: 800ms
+#
+#   # Buffer size for the channel queuing map updates to connected clients.
+#   # Increase for very large tailnets with many simultaneous updates.
+#   # node_mapsession_buffered_chan_size: 30
+#
+#   # Number of parallel workers processing map updates for clients.
+#   # Defaults to a value derived from runtime.NumCPU().
+#   # batcher_workers: 4
+#
+#   # Interval between cleanup operations for expired registration cache entries.
+#   # register_cache_cleanup: 20m
+#
+#   # How long registration cache entries remain valid before expiring.
+#   # register_cache_expiration: 15m
+#
 #   # NodeStore write batching configuration.
 #   # The NodeStore batches write operations before rebuilding peer relationships,
 #   # which is computationally expensive. Batching reduces rebuild frequency.
+#   # Higher values reduce CPU but increase latency for individual operations.
 #   #
 #   # node_store_batch_size: 100
 #   # node_store_batch_timeout: 500ms
+
+# Endpoint collection (service discovery)
+# When enabled, headscale instructs clients to report their open network
+# ports (SSH, HTTP, etc.). These are displayed on the Services page in the
+# admin UI. Disabled by default for privacy.
+# collect_services: false
+
+# Web UI configuration
+# The admin dashboard is served directly by headscale on the same port.
+# No separate service or reverse proxy required.
+# Build the frontend: cd web && npm ci && npm run build
+# Then point static_path to the build output directory.
+#
+# web_ui:
+#   enabled: false
+#
+#   # Path to the built SPA static files (index.html, assets/, etc.)
+#   # Deploy with: scp -r web/build/client/* /var/lib/headscale/web-ui/
+#   static_path: /var/lib/headscale/web-ui
+#
+#   # URL path prefix for the web UI (must start with /)
+#   # The admin panel will be at: {server_url}{base_path}
+#   # e.g., https://headscale.example.com/admin
+#   base_path: /admin
+#
+#   # Session configuration
+#   session:
+#     # Path to session secret file (auto-generated on first start if missing)
+#     secret_path: /var/lib/headscale/session_secret
+#
+#     # How long sessions last before requiring re-login
+#     duration: 24h
+#
+#     # Cookie settings
+#     cookie_name: hs_session
+#     cookie_secure: true          # Set to false ONLY for local HTTP development
+#     cookie_same_site: lax        # strict, lax, or none
+#     cookie_domain: ""            # Empty = auto-detect from server_url
+#
+#   # Authentication providers
+#   # At least one provider must be enabled when web_ui is enabled.
+#   auth:
+#     # Local username/password authentication
+#     local:
+#       enabled: true
+#
+#       # Password policy
+#       min_password_length: 10
+#
+#       # Account lockout after failed attempts
+#       max_login_attempts: 5
+#       lockout_duration: 15m
+#
+#       # Time-based One-Time Password (TOTP) settings
+#       # When enabled, users can optionally set up OTP for their accounts.
+#       # OTP enrollment is per-user, this just enables the feature globally.
+#       otp:
+#         enabled: false
+#         issuer: headscale        # Name shown in authenticator apps
+#         digits: 6                # OTP code length: 6 or 8
+#         period: 30               # OTP validity period in seconds
+#         algorithm: SHA1          # SHA1, SHA256, or SHA512
+#
+#     # GitHub OAuth2 authentication
+#     github:
+#       enabled: false
+#       client_id: ""
+#       client_secret: ""
+#
+#       # Optional access restrictions (empty = allow all GitHub users)
+#       allowed_orgs: []           # Restrict to members of specific GitHub orgs
+#       allowed_teams: []          # Restrict to specific teams, format: "org/team-slug"
+#       allowed_users: []          # Restrict to specific GitHub usernames
+#
+#   # Branding and appearance
+#   branding:
+#     title: "Headscale Admin"     # Page title and header text
+#     logo_url: ""                 # URL to custom logo image (empty = built-in logo)
+#     favicon_url: ""              # URL to custom favicon (empty = built-in favicon)
+#     theme: auto                  # light, dark, or auto (follows browser/OS preference)
+#
+#   # Feature toggles
+#   features:
+#     # Allow non-admin users to view and manage their own nodes only
+#     self_service: false
+#
+#     # Disable all write operations in the UI (read-only dashboard)
+#     readonly: false
+#
+#     # Show debug panels with raw API data, MapResponse info, key details
+#     debug_panel: false
+#
+#     # Number of items per page in list views
+#     page_size: 50
+#
+#   # Rate limiting for auth-related endpoints
+#   rate_limit:
+#     # Maximum login attempts per minute (per IP)
+#     login_attempts_per_minute: 10
+#     # Maximum API requests per minute (per session)
+#     api_requests_per_minute: 100

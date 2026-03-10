@@ -40,6 +40,10 @@ type PolicyManager interface {
 	// strings that apply to the given node.
 	NodeAttrsForNode(node types.NodeView) []string
 
+	// NodeAppCapsForNode evaluates nodeAttrs rules and returns the structured
+	// app capabilities (from the "app" field) that apply to the given node.
+	NodeAppCapsForNode(node types.NodeView) tailcfg.NodeCapMap
+
 	Version() int
 	DebugString() string
 }

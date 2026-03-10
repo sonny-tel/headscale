@@ -1000,6 +1000,12 @@ func (s *State) NodeAttrsForNode(node types.NodeView) []string {
 	return s.polMan.NodeAttrsForNode(node)
 }
 
+// NodeAppCapsForNode evaluates nodeAttrs rules and returns the structured
+// app capabilities (from the "app" field) that apply to the given node.
+func (s *State) NodeAppCapsForNode(node types.NodeView) tailcfg.NodeCapMap {
+	return s.polMan.NodeAppCapsForNode(node)
+}
+
 // ProviderRelayNodes returns the synthetic tailcfg.Node entries for all
 // cached VPN provider relays. Returns nil if no provider manager is active.
 func (s *State) ProviderRelayNodes() []*tailcfg.Node {

@@ -76,6 +76,7 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 	_, matchers := b.mapper.state.Filter()
 
 	nodeAttrs := b.mapper.state.NodeAttrsForNode(nv)
+	appCaps := b.mapper.state.NodeAppCapsForNode(nv)
 
 	tailnode, err := nv.TailNode(
 		b.capVer,
@@ -83,7 +84,8 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 			return policy.ReduceRoutes(nv, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
 		b.mapper.cfg,
-		nodeAttrs)
+		nodeAttrs,
+		appCaps)
 	if err != nil {
 		b.addError(err)
 		return b
@@ -114,9 +116,9 @@ func (b *MapResponseBuilder) WithDomain() *MapResponseBuilder {
 	return b
 }
 
-// WithCollectServicesDisabled sets the collect services flag to false.
-func (b *MapResponseBuilder) WithCollectServicesDisabled() *MapResponseBuilder {
-	b.resp.CollectServices.Set(false)
+// WithCollectServices sets the collect services flag based on config.
+func (b *MapResponseBuilder) WithCollectServices() *MapResponseBuilder {
+	b.resp.CollectServices.Set(b.mapper.cfg.CollectServices)
 	return b
 }
 
@@ -260,6 +262,7 @@ func (b *MapResponseBuilder) buildTailPeers(peers views.Slice[types.NodeView]) (
 			return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
 		b.mapper.cfg,
+		nil,
 		nil)
 	if err != nil {
 		return nil, err
@@ -330,10 +333,12 @@ func (b *MapResponseBuilder) WithProviderPeers() *MapResponseBuilder {
 		sort.SliceStable(b.resp.PeersChanged, func(x, y int) bool {
 			return b.resp.PeersChanged[x].ID < b.resp.PeersChanged[y].ID
 		})
-	} else {
-		// No peers set yet — treat as full peer list.
-		b.resp.Peers = cloned
 	}
+	// When neither Peers nor PeersChanged is set, this is a patch-only
+	// update (e.g., node online/offline, key expiry). Provider relay nodes
+	// are already known to the client from the initial full response, so
+	// we must not set Peers here — that would be interpreted as a full
+	// peer list replacement, clobbering the client's existing peers.
 
 	return b
 }

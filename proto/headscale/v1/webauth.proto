@@ -1,0 +1,78 @@
+syntax = "proto3";
+package headscale.v1;
+option go_package = "github.com/juanfont/headscale/gen/go/v1";
+
+import "google/protobuf/timestamp.proto";
+import "headscale/v1/user.proto";
+
+// Web UI authentication messages.
+// These are separate from auth.proto which handles node registration auth.
+
+message LoginWithPasswordRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string session_token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  User user = 3;
+  bool otp_required = 4;
+}
+
+message SetupOTPRequest {}
+
+message SetupOTPResponse {
+  string secret = 1;
+  string otp_url = 2;
+}
+
+message VerifyOTPRequest {
+  string code = 1;
+}
+
+message ChangePasswordRequest {
+  string current_password = 1;
+  string new_password = 2;
+}
+
+message ChangePasswordResponse {}
+
+message GetGitHubAuthURLRequest {}
+
+message GetGitHubAuthURLResponse {
+  string auth_url = 1;
+}
+
+message GitHubCallbackRequest {
+  string code = 1;
+  string state = 2;
+}
+
+message ValidateSessionRequest {}
+
+message ValidateSessionResponse {
+  User user = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RefreshSessionRequest {}
+
+message LogoutRequest {}
+
+message LogoutResponse {}
+
+message GetRegistrationAuthMethodsRequest {
+  string auth_id = 1;
+}
+
+message GetRegistrationAuthMethodsResponse {
+  bool local_auth_enabled = 1;
+  bool github_auth_enabled = 2;
+}
+
+message ApproveRegistrationRequest {
+  string auth_id = 1;
+}
+
+message ApproveRegistrationResponse {}

@@ -46,11 +46,20 @@ func (rc *RelayCache) Refresh(providerName string, relays []Relay) {
 }
 
 // ListRelays returns a snapshot of relays for the given provider.
+// If providerName is empty, relays for all providers are returned.
 func (rc *RelayCache) ListRelays(providerName string) []Relay {
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()
 
-	return rc.relays[providerName]
+	if providerName != "" {
+		return rc.relays[providerName]
+	}
+
+	var all []Relay
+	for _, relays := range rc.relays {
+		all = append(all, relays...)
+	}
+	return all
 }
 
 // LastSync returns when relays were last synced for the provider.

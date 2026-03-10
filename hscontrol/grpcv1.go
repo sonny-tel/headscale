@@ -62,6 +62,8 @@ func (api headscaleV1APIServer) CreateUser(
 	// This triggers a full policy re-evaluation for all connected nodes.
 	api.h.Change(policyChanged)
 
+	api.h.state.DB().LogAuditEvent("user.created", "api", "user", request.GetName(), "")
+
 	return &v1.CreateUserResponse{User: user.Proto()}, nil
 }
 
@@ -81,6 +83,8 @@ func (api headscaleV1APIServer) RenameUser(
 
 	// Send policy update notifications if needed
 	api.h.Change(c)
+
+	api.h.state.DB().LogAuditEvent("user.renamed", "api", "user", oldUser.Name, fmt.Sprintf("renamed to %s", request.GetNewName()))
 
 	newUser, err := api.h.state.GetUserByName(request.GetNewName())
 	if err != nil {
@@ -106,6 +110,8 @@ func (api headscaleV1APIServer) DeleteUser(
 
 	// Use the change returned from DeleteUser which includes proper policy updates
 	api.h.Change(policyChanged)
+
+	api.h.state.DB().LogAuditEvent("user.deleted", "api", "user", user.Name, "")
 
 	return &v1.DeleteUserResponse{}, nil
 }
@@ -359,6 +365,8 @@ func (api headscaleV1APIServer) SetTags(
 		Strs("tags", request.GetTags()).
 		Msg("changing tags of node")
 
+	api.h.state.DB().LogAuditEvent("node.tags_changed", "api", "node", node.Hostname(), fmt.Sprintf("tags: %v", request.GetTags()))
+
 	return &v1.SetTagsResponse{Node: node.Proto()}, nil
 }
 
@@ -449,6 +457,8 @@ func (api headscaleV1APIServer) DeleteNode(
 
 	api.h.Change(nodeChange)
 
+	api.h.state.DB().LogAuditEvent("node.deleted", "api", "node", node.Hostname(), "")
+
 	return &v1.DeleteNodeResponse{}, nil
 }
 
@@ -503,6 +513,8 @@ func (api headscaleV1APIServer) ExpireNode(
 		Time(zf.ExpiresAt, expiry).
 		Msg("node expired")
 
+	api.h.state.DB().LogAuditEvent("node.expired", "api", "node", node.Hostname(), fmt.Sprintf("expires at %s", expiry.Format(time.RFC3339)))
+
 	return &v1.ExpireNodeResponse{Node: node.Proto()}, nil
 }
 
@@ -523,6 +535,8 @@ func (api headscaleV1APIServer) RenameNode(
 		EmbedObject(node).
 		Str(zf.NewName, request.GetNewName()).
 		Msg("node renamed")
+
+	api.h.state.DB().LogAuditEvent("node.renamed", "api", "node", node.Hostname(), fmt.Sprintf("renamed to %s", request.GetNewName()))
 
 	return &v1.RenameNodeResponse{Node: node.Proto()}, nil
 }
@@ -606,6 +620,8 @@ func (api headscaleV1APIServer) CreateApiKey(
 	if err != nil {
 		return nil, err
 	}
+
+	api.h.state.DB().LogAuditEvent("apikey.created", "api", "apikey", "", "")
 
 	return &v1.CreateApiKeyResponse{ApiKey: apiKey}, nil
 }
@@ -782,6 +798,8 @@ func (api headscaleV1APIServer) SetPolicy(
 	log.Debug().
 		Caller().
 		Msg("gRPC SetPolicy completed successfully because response prepared")
+
+	api.h.state.DB().LogAuditEvent("policy.updated", "api", "policy", "", "")
 
 	return response, nil
 }

@@ -1142,11 +1142,12 @@ func TailNodes(
 	primaryRouteFunc RouteFunc,
 	cfg *Config,
 	nodeAttrs []string,
+	appCaps tailcfg.NodeCapMap,
 ) ([]*tailcfg.Node, error) {
 	tNodes := make([]*tailcfg.Node, 0, nodes.Len())
 
 	for _, node := range nodes.All() {
-		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg, nodeAttrs)
+		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg, nodeAttrs, appCaps)
 		if err != nil {
 			return nil, err
 		}
@@ -1163,6 +1164,7 @@ func (nv NodeView) TailNode(
 	primaryRouteFunc RouteFunc,
 	cfg *Config,
 	nodeAttrs []string,
+	appCaps tailcfg.NodeCapMap,
 ) (*tailcfg.Node, error) {
 	if !nv.Valid() {
 		return nil, ErrInvalidNodeView
@@ -1216,6 +1218,11 @@ func (nv NodeView) TailNode(
 	// Inject policy-driven node attributes into the CapMap.
 	for _, attr := range nodeAttrs {
 		capMap[tailcfg.NodeCapability(attr)] = []tailcfg.RawMessage{}
+	}
+
+	// Inject structured app capabilities (e.g. app-connector config) into the CapMap.
+	for cap, msgs := range appCaps {
+		capMap[cap] = append(capMap[cap], msgs...)
 	}
 
 	tNode := tailcfg.Node{

@@ -2,17 +2,23 @@ package hscontrol
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // nolint
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,6 +31,7 @@ import (
 	"github.com/go-chi/metrics"
 	grpcRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/juanfont/headscale"
+	"github.com/juanfont/headscale/docs"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
 	"github.com/juanfont/headscale/hscontrol/capver"
 	"github.com/juanfont/headscale/hscontrol/db"
@@ -71,6 +78,11 @@ var (
 	)
 )
 
+type docEntry struct {
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
 var (
 	debugDeadlock        = envknob.Bool("HEADSCALE_DEBUG_DEADLOCK")
 	debugDeadlockTimeout = envknob.RegisterDuration("HEADSCALE_DEBUG_DEADLOCK_TIMEOUT")
@@ -96,6 +108,7 @@ type Headscale struct {
 	cfg             *types.Config
 	state           *state.State
 	noisePrivateKey *key.MachinePrivate
+	sessionSecret   string
 	ephemeralGC     *db.EphemeralGarbageCollector
 
 	DERPServer *derpServer.DERPServer
@@ -129,6 +142,14 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		return nil, fmt.Errorf("reading or creating Noise protocol private key: %w", err)
 	}
 
+	var sessionSecret string
+	if cfg.WebUI.Enabled {
+		sessionSecret, err = readOrCreateSessionSecret(cfg.WebUI.Session.SecretPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading or creating session secret: %w", err)
+		}
+	}
+
 	s, err := state.NewState(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("init state: %w", err)
@@ -137,6 +158,7 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	app := Headscale{
 		cfg:               cfg,
 		noisePrivateKey:   noisePrivateKey,
+		sessionSecret:     sessionSecret,
 		clientStreamsOpen: sync.WaitGroup{},
 		state:             s,
 	}
@@ -164,7 +186,11 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 
 	var authProvider AuthProvider
 
-	authProvider = NewAuthProviderWeb(cfg.ServerURL)
+	webUIBasePath := ""
+	if cfg.WebUI.Enabled {
+		webUIBasePath = cfg.WebUI.BasePath
+	}
+	authProvider = NewAuthProviderWeb(cfg.ServerURL, webUIBasePath)
 	if cfg.OIDC.Issuer != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -260,7 +286,101 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		app.state.ReconcileProviderAllocations(context.Background())
 	}
 
+	// Load runtime DNS config override from database (if any).
+	app.loadRuntimeDNSConfig()
+
 	return &app, nil
+}
+
+// applyDNSConfig updates the running DNS configuration from a types.DNSConfig.
+// It regenerates TailcfgDNSConfig and applies MagicDNS routes.
+func (h *Headscale) applyDNSConfig(dns types.DNSConfig) {
+	h.cfg.DNSConfig = dns
+	h.cfg.TailcfgDNSConfig = types.DNSToTailcfgDNS(dns)
+
+	if h.cfg.TailcfgDNSConfig != nil && h.cfg.TailcfgDNSConfig.Proxied {
+		var magicDNSDomains []dnsname.FQDN
+		if h.cfg.PrefixV4 != nil {
+			magicDNSDomains = append(
+				magicDNSDomains,
+				util.GenerateIPv4DNSRootDomain(*h.cfg.PrefixV4)...)
+		}
+		if h.cfg.PrefixV6 != nil {
+			magicDNSDomains = append(
+				magicDNSDomains,
+				util.GenerateIPv6DNSRootDomain(*h.cfg.PrefixV6)...)
+		}
+		if h.cfg.TailcfgDNSConfig.Routes == nil {
+			h.cfg.TailcfgDNSConfig.Routes = make(map[string][]*dnstype.Resolver)
+		}
+		for _, d := range magicDNSDomains {
+			h.cfg.TailcfgDNSConfig.Routes[d.WithoutTrailingDot()] = nil
+		}
+	}
+}
+
+// loadRuntimeDNSConfig checks DB for a runtime DNS config override and applies it.
+func (h *Headscale) loadRuntimeDNSConfig() {
+	rtCfg, err := h.state.DB().GetRuntimeDNSConfig()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to load runtime DNS config from database")
+		return
+	}
+	if rtCfg == nil {
+		return
+	}
+
+	var dns types.DNSConfig
+	if err := json.Unmarshal([]byte(rtCfg.Data), &dns); err != nil {
+		log.Warn().Err(err).Msg("failed to unmarshal runtime DNS config, using file defaults")
+		return
+	}
+
+	h.applyDNSConfig(dns)
+	log.Info().Msg("loaded runtime DNS config from database")
+}
+
+// fileDefaultsDNSConfig returns the DNS config from the original config file.
+// This is used as the "defaults" for the restore operation.
+func (h *Headscale) fileDefaultsDNSConfig() types.DNSConfig {
+	return types.DNSConfigFromFile(h.cfg)
+}
+
+// dnsConfigToJSON builds the JSON response map for a DNS config.
+func (h *Headscale) dnsConfigToJSON(dns types.DNSConfig) map[string]any {
+	globalNS := make([]string, 0, len(dns.Nameservers.Global))
+	globalNS = append(globalNS, dns.Nameservers.Global...)
+
+	splitNS := make(map[string][]string)
+	for domain, servers := range dns.Nameservers.Split {
+		splitNS[domain] = servers
+	}
+
+	searchDomains := dns.SearchDomains
+	if searchDomains == nil {
+		searchDomains = []string{}
+	}
+
+	extraRecords := make([]map[string]string, 0, len(dns.ExtraRecords))
+	for _, rec := range dns.ExtraRecords {
+		extraRecords = append(extraRecords, map[string]string{
+			"name":  rec.Name,
+			"type":  rec.Type,
+			"value": rec.Value,
+		})
+	}
+
+	return map[string]any{
+		"magicDns":         dns.MagicDNS,
+		"baseDomain":       dns.BaseDomain,
+		"overrideLocalDns": dns.OverrideLocalDNS,
+		"nameservers": map[string]any{
+			"global": globalNS,
+			"split":  splitNS,
+		},
+		"searchDomains": searchDomains,
+		"extraRecords":  extraRecords,
+	}
 }
 
 // Redirect to our TLS url.
@@ -499,6 +619,13 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 			Str("client_address", req.RemoteAddr).
 			Msg("HTTP authentication invoked")
 
+		// Public webauth endpoints that don't require pre-existing auth.
+		if isPublicWebAuthPath(req.URL.Path) {
+			next.ServeHTTP(writer, req)
+
+			return
+		}
+
 		authHeader := req.Header.Get("Authorization")
 
 		writeUnauthorized := func(statusCode int) {
@@ -509,39 +636,176 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 			}
 		}
 
-		if !strings.HasPrefix(authHeader, AuthPrefix) {
-			log.Error().
-				Caller().
-				Str("client_address", req.RemoteAddr).
-				Msg(`missing "Bearer " prefix in "Authorization" header`)
-			writeUnauthorized(http.StatusUnauthorized)
+		// Try Bearer API key authentication first.
+		if strings.HasPrefix(authHeader, AuthPrefix) {
+			valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
+			if err != nil {
+				log.Info().
+					Caller().
+					Err(err).
+					Str("client_address", req.RemoteAddr).
+					Msg("failed to validate token")
+				writeUnauthorized(http.StatusUnauthorized)
+
+				return
+			}
+
+			if !valid {
+				log.Info().
+					Str("client_address", req.RemoteAddr).
+					Msg("invalid token")
+				writeUnauthorized(http.StatusUnauthorized)
+
+				return
+			}
+
+			next.ServeHTTP(writer, req)
 
 			return
 		}
 
-		valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
-		if err != nil {
-			log.Info().
-				Caller().
-				Err(err).
-				Str("client_address", req.RemoteAddr).
-				Msg("failed to validate token")
-			writeUnauthorized(http.StatusUnauthorized)
+		// Try session cookie authentication (web UI sessions).
+		if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+			session, err := h.state.DB().ValidateUserSession(cookie.Value)
+			if err == nil && session.User.CanWebAuth() {
+				next.ServeHTTP(writer, req)
 
-			return
+				return
+			}
 		}
 
-		if !valid {
-			log.Info().
-				Str("client_address", req.RemoteAddr).
-				Msg("invalid token")
-			writeUnauthorized(http.StatusUnauthorized)
-
-			return
-		}
-
-		next.ServeHTTP(writer, req)
+		log.Error().
+			Caller().
+			Str("client_address", req.RemoteAddr).
+			Msg("no valid authentication credentials provided")
+		writeUnauthorized(http.StatusUnauthorized)
 	})
+}
+
+// isPublicWebAuthPath returns true for webauth endpoints that must be
+// accessible without pre-existing authentication (login, OAuth flows,
+// auth methods discovery).
+func isPublicWebAuthPath(urlPath string) bool {
+	publicPrefixes := []string{
+		"/api/v1/webauth/login",
+		"/api/v1/webauth/github",
+		"/api/v1/webauth/github/callback",
+		"/api/v1/webauth/registration/",
+		"/api/v1/webauth/otp/verify",
+		"/api/v1/webauth/approval-status",
+	}
+
+	for _, p := range publicPrefixes {
+		if urlPath == p || strings.HasPrefix(urlPath, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// webRoleAuthorizationHandler wraps the gRPC-gateway handler with role-based
+// authorization for web sessions. API key access is unrestricted (API keys are
+// created by admins). Web session access is restricted per Tailscale's role model:
+//
+//	admin:         full access
+//	network_admin: read all, write ACL/policy and DNS
+//	it_admin:      read all, write users/machines/keys
+//	member:        read-only (list operations only)
+func (h *Headscale) webRoleAuthorizationHandler(
+	grpcMux http.Handler,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		// API key auth — allow through (created by admins, trusted).
+		authHeader := req.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, AuthPrefix) {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+
+		// Public webauth paths — allow through.
+		if isPublicWebAuthPath(req.URL.Path) {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+
+		// Webauth session paths (login, session, logout, GitHub callback, OTP) — allow through.
+		if strings.HasPrefix(req.URL.Path, "/api/v1/webauth/") {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+
+		// Read-only endpoints — any authenticated user may access.
+		if req.Method == http.MethodGet {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+
+		// Everything else is a mutating operation. Extract user role from session.
+		cookie, err := req.Cookie("hs_session")
+		if err != nil || cookie.Value == "" {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+		session, err := h.state.DB().ValidateUserSession(cookie.Value)
+		if err != nil {
+			grpcMux.ServeHTTP(w, req)
+			return
+		}
+
+		role := string(session.User.Role)
+		urlPath := req.URL.Path
+
+		if !isRoleAllowed(role, req.Method, urlPath) {
+			http.Error(w, "Forbidden: insufficient permissions for this action", http.StatusForbidden)
+			return
+		}
+
+		grpcMux.ServeHTTP(w, req)
+	}
+}
+
+// isRoleAllowed checks whether the given role can perform the HTTP method
+// on the given endpoint path. Based on Tailscale's permission matrix.
+func isRoleAllowed(role, method, urlPath string) bool {
+	if role == types.UserRoleAdmin {
+		return true
+	}
+
+	// Classify the operation by URL path prefix.
+	switch {
+	// User write operations: admin, it_admin
+	case strings.HasPrefix(urlPath, "/api/v1/user"):
+		return role == types.UserRoleITAdmin
+
+	// Node write operations: admin, it_admin
+	case strings.HasPrefix(urlPath, "/api/v1/node"):
+		return role == types.UserRoleITAdmin
+
+	// PreAuthKey write operations: admin, network_admin, it_admin
+	case strings.HasPrefix(urlPath, "/api/v1/preauthkey"):
+		return role == types.UserRoleNetworkAdmin || role == types.UserRoleITAdmin
+
+	// API key write operations: admin, network_admin, it_admin
+	case strings.HasPrefix(urlPath, "/api/v1/apikey"):
+		return role == types.UserRoleNetworkAdmin || role == types.UserRoleITAdmin
+
+	// Policy write operations: admin, network_admin
+	case strings.HasPrefix(urlPath, "/api/v1/policy"):
+		return role == types.UserRoleNetworkAdmin
+
+	// Auth approve/reject operations: admin, it_admin
+	case strings.HasPrefix(urlPath, "/api/v1/auth/"):
+		return role == types.UserRoleITAdmin
+
+	// Provider operations: admin only
+	case strings.HasPrefix(urlPath, "/api/v1/provider"):
+		return false
+
+	default:
+		// Unknown mutating endpoint. Admin only by default.
+		return false
+	}
 }
 
 // ensureUnixSocketIsAbsent will check if the given path for headscales unix socket is clear
@@ -601,12 +865,705 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Use(h.httpAuthenticationMiddleware)
-		r.HandleFunc("/v1/*", grpcMux.ServeHTTP)
+
+		// Lightweight approval-status check for pending users (no auth needed).
+		r.Get("/v1/webauth/approval-status", func(w http.ResponseWriter, req *http.Request) {
+			username := req.URL.Query().Get("username")
+			approved := false
+			if username != "" {
+				if u, err := h.state.DB().GetUserByName(username); err == nil {
+					approved = !u.IsPending()
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"approved":%t}`, approved)
+		})
+
+		// GitHub OAuth callback: when GitHub redirects the browser here,
+		// forward to the frontend SPA which handles the exchange via API.
+		if h.cfg.WebUI.Enabled && h.cfg.WebUI.Auth.GitHub.Enabled {
+			r.Get("/v1/webauth/github/callback", func(w http.ResponseWriter, req *http.Request) {
+				// Browser navigations don't set Content-Type; the frontend fetch does.
+				if !strings.Contains(req.Header.Get("Content-Type"), "application/json") {
+					basePath := h.cfg.WebUI.BasePath
+					if basePath == "" {
+						basePath = "/admin"
+					}
+					target := fmt.Sprintf("%s/login?code=%s&state=%s",
+						basePath,
+						url.QueryEscape(req.URL.Query().Get("code")),
+						url.QueryEscape(req.URL.Query().Get("state")))
+					http.Redirect(w, req, target, http.StatusFound)
+					return
+				}
+				grpcMux.ServeHTTP(w, req)
+			})
+		}
+
+		// DNS config endpoints for the web UI (admin-only).
+		r.Route("/v1/dns/config", func(r chi.Router) {
+			// Admin check middleware for DNS endpoints.
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					var isAdmin bool
+					if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+						if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+							isAdmin = session.User.IsAdmin()
+						}
+					}
+					authHeader := req.Header.Get("Authorization")
+					if strings.HasPrefix(authHeader, AuthPrefix) {
+						if valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix)); err == nil && valid {
+							isAdmin = true
+						}
+					}
+					if !isAdmin {
+						http.Error(w, "Forbidden", http.StatusForbidden)
+						return
+					}
+					next.ServeHTTP(w, req)
+				})
+			})
+
+			// GET — return the active DNS config.
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				rtCfg, _ := h.state.DB().GetRuntimeDNSConfig()
+				resp := h.dnsConfigToJSON(h.cfg.DNSConfig)
+				resp["isOverridden"] = rtCfg != nil
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp) //nolint:errcheck
+			})
+
+			// GET — return file-based defaults.
+			r.Get("/defaults", func(w http.ResponseWriter, req *http.Request) {
+				fileDNS := h.fileDefaultsDNSConfig()
+				resp := h.dnsConfigToJSON(fileDNS)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp) //nolint:errcheck
+			})
+
+			// PUT — update runtime DNS config (stored in DB).
+			r.Put("/", func(w http.ResponseWriter, req *http.Request) {
+				var payload struct {
+					MagicDns         bool                `json:"magicDns"`
+					BaseDomain       string              `json:"baseDomain"`
+					OverrideLocalDns bool                `json:"overrideLocalDns"`
+					Nameservers      types.Nameservers   `json:"nameservers"`
+					SearchDomains    []string            `json:"searchDomains"`
+					ExtraRecords     []map[string]string `json:"extraRecords"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+					http.Error(w, "Invalid JSON", http.StatusBadRequest)
+					return
+				}
+
+				dnsCfg := types.DNSConfig{
+					MagicDNS:         payload.MagicDns,
+					BaseDomain:       payload.BaseDomain,
+					OverrideLocalDNS: payload.OverrideLocalDns,
+					Nameservers:      payload.Nameservers,
+					SearchDomains:    payload.SearchDomains,
+				}
+				for _, rec := range payload.ExtraRecords {
+					dnsCfg.ExtraRecords = append(dnsCfg.ExtraRecords, tailcfg.DNSRecord{
+						Name:  rec["name"],
+						Type:  rec["type"],
+						Value: rec["value"],
+					})
+				}
+
+				data, err := json.Marshal(dnsCfg)
+				if err != nil {
+					http.Error(w, "Failed to serialize config", http.StatusInternalServerError)
+					return
+				}
+				if _, err := h.state.DB().SetRuntimeDNSConfig(string(data)); err != nil {
+					http.Error(w, "Failed to save config", http.StatusInternalServerError)
+					return
+				}
+
+				h.applyDNSConfig(dnsCfg)
+				h.Change(change.DNSConfig())
+
+				resp := h.dnsConfigToJSON(dnsCfg)
+				resp["isOverridden"] = true
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp) //nolint:errcheck
+			})
+
+			// POST /restore — remove DB override, revert to file defaults.
+			r.Post("/restore", func(w http.ResponseWriter, req *http.Request) {
+				if err := h.state.DB().DeleteRuntimeDNSConfig(); err != nil {
+					http.Error(w, "Failed to restore defaults", http.StatusInternalServerError)
+					return
+				}
+
+				fileDNS := h.fileDefaultsDNSConfig()
+				h.applyDNSConfig(fileDNS)
+				h.Change(change.DNSConfig())
+
+				resp := h.dnsConfigToJSON(fileDNS)
+				resp["isOverridden"] = false
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp) //nolint:errcheck
+			})
+		})
+
+		// Audit event log endpoint (admin-only).
+		r.Route("/v1/audit/events", func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					var isAdmin bool
+					if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+						if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+							isAdmin = session.User.IsAdmin()
+						}
+					}
+					authHeader := req.Header.Get("Authorization")
+					if strings.HasPrefix(authHeader, AuthPrefix) {
+						if valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix)); err == nil && valid {
+							isAdmin = true
+						}
+					}
+					if !isAdmin {
+						http.Error(w, "Forbidden", http.StatusForbidden)
+						return
+					}
+					next.ServeHTTP(w, req)
+				})
+			})
+
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				eventType := req.URL.Query().Get("event_type")
+				limit := 100
+				offset := 0
+				if l := req.URL.Query().Get("limit"); l != "" {
+					if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+						limit = n
+					}
+				}
+				if o := req.URL.Query().Get("offset"); o != "" {
+					if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+						offset = n
+					}
+				}
+
+				events, total, err := h.state.DB().ListAuditEvents(eventType, limit, offset)
+				if err != nil {
+					http.Error(w, "Failed to list events", http.StatusInternalServerError)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"events": events,
+					"total":  total,
+				})
+			})
+		})
+
+		// Console log endpoint (admin-only) — returns recent headscale log output.
+		r.Route("/v1/console/logs", func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					var isAdmin bool
+					if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+						if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+							isAdmin = session.User.IsAdmin()
+						}
+					}
+					authHeader := req.Header.Get("Authorization")
+					if strings.HasPrefix(authHeader, AuthPrefix) {
+						if valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix)); err == nil && valid {
+							isAdmin = true
+						}
+					}
+					if !isAdmin {
+						http.Error(w, "Forbidden", http.StatusForbidden)
+						return
+					}
+					next.ServeHTTP(w, req)
+				})
+			})
+
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				limit := 500
+				if l := req.URL.Query().Get("limit"); l != "" {
+					if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 2000 {
+						limit = n
+					}
+				}
+				entries := ConsoleLogBuffer.Entries(limit)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"entries": entries,
+				})
+			})
+		})
+
+		// Profile endpoint — lets the current user view/update their own profile.
+		r.Route("/v1/profile/me", func(r chi.Router) {
+			// GET — return the current user's profile.
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				var user *types.User
+				if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+					if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+						user = &session.User
+					}
+				}
+				if user == nil {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"user": user.Proto()}) //nolint:errcheck
+			})
+
+			// PUT — update the current user's display name and profile picture.
+			r.Put("/", func(w http.ResponseWriter, req *http.Request) {
+				var user *types.User
+				if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+					if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+						user = &session.User
+					}
+				}
+				if user == nil {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+
+				var payload struct {
+					DisplayName   string `json:"display_name"`
+					ProfilePicURL string `json:"profile_pic_url"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+					http.Error(w, "Invalid JSON", http.StatusBadRequest)
+					return
+				}
+
+				// Validate profile pic URL if provided.
+				if payload.ProfilePicURL != "" {
+					if u, err := url.Parse(payload.ProfilePicURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+						http.Error(w, "Invalid profile picture URL", http.StatusBadRequest)
+						return
+					}
+				}
+
+				updated, err := h.state.DB().UpdateUserProfile(
+					types.UserID(user.ID),
+					payload.DisplayName,
+					payload.ProfilePicURL,
+				)
+				if err != nil {
+					http.Error(w, "Failed to update profile", http.StatusInternalServerError)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"user": updated.Proto()}) //nolint:errcheck
+			})
+			// POST — upload an avatar image file.
+			r.Post("/avatar", func(w http.ResponseWriter, req *http.Request) {
+				var user *types.User
+				if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+					if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+						user = &session.User
+					}
+				}
+				if user == nil {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+
+				// 2 MB max
+				req.Body = http.MaxBytesReader(w, req.Body, 2<<20)
+				file, header, err := req.FormFile("avatar")
+				if err != nil {
+					http.Error(w, "Invalid file upload", http.StatusBadRequest)
+					return
+				}
+				defer file.Close()
+
+				// Read first 512 bytes to detect content type.
+				buf := make([]byte, 512)
+				n, err := file.Read(buf)
+				if err != nil && err != io.EOF {
+					http.Error(w, "Failed to read file", http.StatusBadRequest)
+					return
+				}
+				contentType := http.DetectContentType(buf[:n])
+
+				allowedTypes := map[string]string{
+					"image/jpeg": ".jpg",
+					"image/png":  ".png",
+					"image/gif":  ".gif",
+					"image/webp": ".webp",
+				}
+				ext, ok := allowedTypes[contentType]
+				if !ok {
+					http.Error(w, "File must be JPEG, PNG, GIF, or WebP", http.StatusBadRequest)
+					return
+				}
+
+				// Ensure avatars directory exists next to the database.
+				avatarDir := filepath.Join(filepath.Dir(h.cfg.Database.Sqlite.Path), "avatars")
+				if err := os.MkdirAll(avatarDir, 0o750); err != nil {
+					http.Error(w, "Failed to create avatar directory", http.StatusInternalServerError)
+					return
+				}
+
+				// Save as {userID}{ext}
+				filename := fmt.Sprintf("%d%s", user.ID, ext)
+				destPath := filepath.Join(avatarDir, filename)
+
+				// Remove old avatars for this user (different extension).
+				for _, oldExt := range []string{".jpg", ".png", ".gif", ".webp"} {
+					if oldExt != ext {
+						os.Remove(filepath.Join(avatarDir, fmt.Sprintf("%d%s", user.ID, oldExt)))
+					}
+				}
+
+				out, err := os.Create(destPath) //nolint:gosec
+				if err != nil {
+					http.Error(w, "Failed to save avatar", http.StatusInternalServerError)
+					return
+				}
+				defer out.Close()
+
+				// Write the already-read bytes, then copy the rest.
+				if _, err := out.Write(buf[:n]); err != nil {
+					http.Error(w, "Failed to save avatar", http.StatusInternalServerError)
+					return
+				}
+				if _, err := io.Copy(out, file); err != nil {
+					http.Error(w, "Failed to save avatar", http.StatusInternalServerError)
+					return
+				}
+
+				_ = header // suppress unused warning
+
+				// Build the avatar URL and update the user's profile.
+				avatarURL := fmt.Sprintf("%s/api/v1/profile/avatar/%d%s", h.cfg.ServerURL, user.ID, ext)
+				updated, err := h.state.DB().UpdateUserProfile(
+					types.UserID(user.ID),
+					user.DisplayName,
+					avatarURL,
+				)
+				if err != nil {
+					http.Error(w, "Failed to update profile", http.StatusInternalServerError)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"user": updated.Proto()}) //nolint:errcheck
+			})
+		})
+
+		// Serve avatar images (public — Tailscale clients need to fetch these).
+		r.Get("/v1/profile/avatar/{filename}", func(w http.ResponseWriter, req *http.Request) {
+			filename := chi.URLParam(req, "filename")
+
+			// Sanitize: only allow {digits}.{ext} patterns.
+			if !isValidAvatarFilename(filename) {
+				http.Error(w, "Not found", http.StatusNotFound)
+				return
+			}
+
+			avatarDir := filepath.Join(filepath.Dir(h.cfg.Database.Sqlite.Path), "avatars")
+			avatarPath := filepath.Join(avatarDir, filename)
+
+			f, err := os.Open(avatarPath) //nolint:gosec
+			if err != nil {
+				http.Error(w, "Not found", http.StatusNotFound)
+				return
+			}
+			defer f.Close()
+
+			stat, err := f.Stat()
+			if err != nil || stat.IsDir() {
+				http.Error(w, "Not found", http.StatusNotFound)
+				return
+			}
+
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			http.ServeContent(w, req, stat.Name(), stat.ModTime(), f)
+		})
+
+		// Enriched nodes endpoint — returns the standard node list plus
+		// client_version, os, and fqdn fields from Hostinfo.
+		r.Get("/v1/web/nodes", func(w http.ResponseWriter, req *http.Request) {
+			nodes := h.state.ListNodes()
+			baseDomain := h.cfg.BaseDomain
+
+			type enrichedNode struct {
+				ID            uint64 `json:"id,omitempty"`
+				ClientVersion string `json:"client_version,omitempty"`
+				OS            string `json:"os,omitempty"`
+				OSVersion     string `json:"os_version,omitempty"`
+				FQDN          string `json:"fqdn,omitempty"`
+			}
+
+			result := make([]enrichedNode, 0, nodes.Len())
+			for _, nv := range nodes.All() {
+				en := enrichedNode{
+					ID: uint64(nv.ID()),
+				}
+				if hi := nv.Hostinfo(); hi.Valid() {
+					en.ClientVersion = hi.IPNVersion()
+					en.OS = hi.OS()
+					en.OSVersion = hi.OSVersion()
+				}
+				if fqdn, err := nv.GetFQDN(baseDomain); err == nil {
+					en.FQDN = fqdn
+				}
+				result = append(result, en)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"nodes": result}) //nolint:errcheck
+		})
+
+		// Discovered services endpoint — returns live endpoints from online nodes.
+		// Each node reports its listening ports via Hostinfo.Services when
+		// collect_services is enabled in the config.
+		r.Get("/v1/web/services/discovered", func(w http.ResponseWriter, req *http.Request) {
+			nodes := h.state.ListNodes()
+
+			type discoveredEndpoint struct {
+				ServiceName string `json:"service_name"`
+				IP          string `json:"ip"`
+				Port        uint16 `json:"port"`
+				Proto       string `json:"proto"`
+				Type        string `json:"type"`
+				Machine     string `json:"machine"`
+				User        string `json:"user"`
+				NodeID      uint64 `json:"node_id"`
+			}
+
+			var endpoints []discoveredEndpoint
+
+			for _, nv := range nodes.All() {
+				// Only include online nodes — live monitoring.
+				if !nv.IsOnline().Get() {
+					continue
+				}
+
+				hi := nv.Hostinfo()
+				if !hi.Valid() {
+					continue
+				}
+
+				svcs := hi.Services()
+
+				ips := nv.IPs()
+				var ip string
+				if len(ips) > 0 {
+					ip = ips[0].String()
+				}
+
+				machine := nv.GivenName()
+				user := nv.User().Name()
+
+				for i := range svcs.Len() {
+					svc := svcs.At(i)
+					proto := string(svc.Proto)
+
+					// Skip peerapi internal services.
+					if svc.Proto == "peerapi4" || svc.Proto == "peerapi6" || svc.Proto == "peerapi-dns-proxy" {
+						continue
+					}
+
+					svcType := classifyPort(svc.Port, proto)
+
+					endpoints = append(endpoints, discoveredEndpoint{
+						ServiceName: svc.Description,
+						IP:          ip,
+						Port:        svc.Port,
+						Proto:       proto,
+						Type:        svcType,
+						Machine:     machine,
+						User:        user,
+						NodeID:      uint64(nv.ID()),
+					})
+				}
+			}
+
+			resp := map[string]any{
+				"endpoints":        endpoints,
+				"collect_services": h.cfg.CollectServices,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp) //nolint:errcheck
+		})
+
+		// Documentation tree endpoint — returns the list of markdown files.
+		r.Get("/v1/web/docs/tree", func(w http.ResponseWriter, req *http.Request) {
+			var entries []docEntry
+			walkDir(docs.Content, ".", &entries)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"docs": entries}) //nolint:errcheck
+		})
+
+		// Documentation content endpoint — returns the raw markdown of one file.
+		r.Get("/v1/web/docs/content", func(w http.ResponseWriter, req *http.Request) {
+			docPath := req.URL.Query().Get("path")
+			if docPath == "" {
+				http.Error(w, "missing path parameter", http.StatusBadRequest)
+				return
+			}
+			// Sanitise: prevent directory traversal.
+			docPath = filepath.Clean(docPath)
+			if strings.Contains(docPath, "..") {
+				http.Error(w, "invalid path", http.StatusBadRequest)
+				return
+			}
+			data, err := docs.Content.ReadFile(docPath)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Write(data) //nolint:errcheck
+		})
+
+		// Server info endpoint — returns version, config basics for the admin UI.
+		r.Get("/v1/server/info", func(w http.ResponseWriter, req *http.Request) {
+			versionInfo := types.GetVersionInfo()
+			info := map[string]any{
+				"version":   versionInfo.Version,
+				"commit":    versionInfo.Commit,
+				"buildTime": versionInfo.BuildTime,
+				"go": map[string]string{
+					"version": versionInfo.Go.Version,
+					"os":      versionInfo.Go.OS,
+					"arch":    versionInfo.Go.Arch,
+				},
+				"dirty":              versionInfo.Dirty,
+				"serverUrl":          h.cfg.ServerURL,
+				"tailnetDisplayName": h.cfg.TailnetDisplayName,
+				"baseDomain":         h.cfg.BaseDomain,
+				"derpEnabled":        h.cfg.DERP.ServerEnabled,
+				"databaseType":       h.cfg.Database.Type,
+				"logLevel":           h.cfg.Log.Level.String(),
+				"policyMode":         h.cfg.Policy.Mode,
+				"collectServices":    h.cfg.CollectServices,
+			}
+			if h.cfg.PrefixV4 != nil {
+				info["prefixV4"] = h.cfg.PrefixV4.String()
+			}
+			if h.cfg.PrefixV6 != nil {
+				info["prefixV6"] = h.cfg.PrefixV6.String()
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(info) //nolint:errcheck
+		})
+
+		r.HandleFunc("/v1/*", h.webRoleAuthorizationHandler(grpcMux))
 	})
+
+	// Web UI SPA serving.
+	if h.cfg.WebUI.Enabled {
+		basePath := h.cfg.WebUI.BasePath
+		if basePath == "" {
+			basePath = "/admin"
+		}
+
+		r.Handle(basePath, h.webuiHandler())
+		r.Handle(basePath+"/*", h.webuiHandler())
+	}
+
 	r.Get("/favicon.ico", FaviconHandler)
-	r.Get("/", BlankHandler)
+
+	if h.cfg.WebUI.Enabled {
+		basePath := h.cfg.WebUI.BasePath
+		if basePath == "" {
+			basePath = "/admin"
+		}
+
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, basePath, http.StatusFound)
+		})
+	} else {
+		r.Get("/", BlankHandler)
+	}
 
 	return r
+}
+
+// walkDir recursively walks an embed.FS and collects markdown file paths.
+func walkDir(fsys embed.FS, dir string, out *[]docEntry) {
+	entries, err := fsys.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		p := e.Name()
+		if dir != "." {
+			p = dir + "/" + e.Name()
+		}
+		if e.IsDir() {
+			walkDir(fsys, p, out)
+			continue
+		}
+		if !strings.HasSuffix(p, ".md") {
+			continue
+		}
+		// Derive a title from the filename.
+		name := strings.TrimSuffix(filepath.Base(p), ".md")
+		title := strings.ReplaceAll(name, "-", " ")
+		if len(title) > 0 {
+			title = strings.ToUpper(title[:1]) + title[1:]
+		}
+		*out = append(*out, docEntry{Path: p, Title: title})
+	}
+}
+
+// classifyPort maps well-known ports to human-readable service type names
+// for the discovered services endpoint.
+func classifyPort(port uint16, proto string) string {
+	if proto == "udp" {
+		switch port {
+		case 53:
+			return "DNS"
+		case 443:
+			return "QUIC"
+		default:
+			return "Other"
+		}
+	}
+	switch port {
+	case 22:
+		return "SSH"
+	case 80:
+		return "HTTP"
+	case 443:
+		return "HTTPS"
+	case 3389:
+		return "RDP"
+	case 5900:
+		return "VNC"
+	case 53:
+		return "DNS"
+	case 3306:
+		return "MySQL"
+	case 5432:
+		return "PostgreSQL"
+	case 6379:
+		return "Redis"
+	case 8080, 8443, 8888:
+		return "HTTP"
+	case 25, 587, 465:
+		return "SMTP"
+	case 143, 993:
+		return "IMAP"
+	case 110, 995:
+		return "POP3"
+	case 21:
+		return "FTP"
+	default:
+		return "Other"
+	}
 }
 
 // Serve launches the HTTP and gRPC server service Headscale and the API.
@@ -1158,6 +2115,37 @@ func readOrCreatePrivateKey(path string) (*key.MachinePrivate, error) {
 	return &machineKey, nil
 }
 
+func readOrCreateSessionSecret(path string) (string, error) {
+	dir := filepath.Dir(path)
+
+	err := util.EnsureDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("ensuring session secret directory: %w", err)
+	}
+
+	secretBytes, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		log.Info().Str("path", path).Msg("no session secret file at path, creating...")
+
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return "", fmt.Errorf("generating random session secret: %w", err)
+		}
+
+		secret := hex.EncodeToString(raw)
+
+		if err := os.WriteFile(path, []byte(secret), privateKeyFileMode); err != nil {
+			return "", fmt.Errorf("saving session secret to disk at path %q: %w", path, err)
+		}
+
+		return secret, nil
+	} else if err != nil {
+		return "", fmt.Errorf("reading session secret file: %w", err)
+	}
+
+	return strings.TrimSpace(string(secretBytes)), nil
+}
+
 // Change is used to send changes to nodes.
 // All change should be enqueued here and empty will be automatically
 // ignored.
@@ -1218,7 +2206,7 @@ func (e *zerologLogEntry) Write(
 	elapsed time.Duration,
 	extra any,
 ) {
-	log.Info().
+	log.Debug().
 		Str("method", e.method).
 		Str("path", e.path).
 		Str("proto", e.proto).
@@ -1237,4 +2225,19 @@ func (e *zerologLogEntry) Panic(
 		Interface("panic", v).
 		Bytes("stack", stack).
 		Msg("http handler panic")
+}
+
+// isValidAvatarFilename checks that the filename matches {digits}.{ext}.
+func isValidAvatarFilename(name string) bool {
+	dotIdx := strings.LastIndex(name, ".")
+	if dotIdx <= 0 {
+		return false
+	}
+	for _, c := range name[:dotIdx] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	ext := name[dotIdx:]
+	return ext == ".jpg" || ext == ".png" || ext == ".gif" || ext == ".webp"
 }

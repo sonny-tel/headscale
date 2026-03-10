@@ -1,11 +1,13 @@
 package main
 
 import (
+	"io"
 	"os"
 	"time"
 
 	"github.com/jagottsicher/termcolor"
 	"github.com/juanfont/headscale/cmd/headscale/cli"
+	"github.com/juanfont/headscale/hscontrol"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -34,11 +36,13 @@ func main() {
 	}
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{
-		Out:        os.Stderr,
+
+	consoleWriter := zerolog.ConsoleWriter{
+		Out:        io.MultiWriter(os.Stderr, hscontrol.ConsoleLogBuffer),
 		TimeFormat: time.RFC3339,
 		NoColor:    !colors,
-	})
+	}
+	log.Logger = log.Output(consoleWriter)
 
 	cli.Execute()
 }

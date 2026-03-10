@@ -11,6 +11,7 @@ import "headscale/v1/apikey.proto";
 import "headscale/v1/auth.proto";
 import "headscale/v1/policy.proto";
 import "headscale/v1/provider.proto";
+import "headscale/v1/webauth.proto";
 
 service HeadscaleService {
   // --- User start ---
@@ -163,6 +164,99 @@ service HeadscaleService {
     };
   }
   // --- Auth end ---
+
+  // --- Web Auth start ---
+  rpc LoginWithPassword(LoginWithPasswordRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/login"
+      body : "*"
+    };
+  }
+
+  rpc SetupOTP(SetupOTPRequest) returns (SetupOTPResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/otp/setup"
+    };
+  }
+
+  rpc VerifyOTP(VerifyOTPRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/otp/verify"
+      body : "*"
+    };
+  }
+
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/password/change"
+      body : "*"
+    };
+  }
+
+  rpc GetGitHubAuthURL(GetGitHubAuthURLRequest)
+      returns (GetGitHubAuthURLResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/webauth/github"
+    };
+  }
+
+  rpc GitHubCallback(GitHubCallbackRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/webauth/github/callback"
+    };
+  }
+
+  rpc ValidateSession(ValidateSessionRequest)
+      returns (ValidateSessionResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/webauth/session"
+    };
+  }
+
+  rpc RefreshSession(RefreshSessionRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/session/refresh"
+    };
+  }
+
+  rpc WebAuthLogout(LogoutRequest) returns (LogoutResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/logout"
+    };
+  }
+
+  rpc GetRegistrationAuthMethods(GetRegistrationAuthMethodsRequest)
+      returns (GetRegistrationAuthMethodsResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/webauth/registration/{auth_id}/methods"
+    };
+  }
+
+  rpc ApproveRegistration(ApproveRegistrationRequest)
+      returns (ApproveRegistrationResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/webauth/registration/{auth_id}/approve"
+      body : "*"
+    };
+  }
+  // --- Web Auth end ---
+
+  // --- User Role & Credentials start ---
+  rpc SetUserRole(SetUserRoleRequest) returns (SetUserRoleResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/user/{id}/role"
+      body : "*"
+    };
+  }
+
+  rpc SetUserCredentials(SetUserCredentialsRequest)
+      returns (SetUserCredentialsResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/user/{user_id}/credentials"
+      body : "*"
+    };
+  }
+  // --- User Role & Credentials end ---
 
   // --- ApiKeys start ---
   rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse) {
