@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 import "prismjs/components/prism-json";
-import { getPolicy, setPolicy } from "../api";
+import { getPolicy, setPolicy, getServerInfo } from "../api";
 import { useAuth } from "../auth";
 import { getPermissions } from "../permissions";
 
@@ -16,19 +16,45 @@ export function ACLPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [policyMode, setPolicyMode] = useState<string>("");
 
+  const isFileMode = policyMode === "file";
+  const canEdit = perms.canWriteACL && !isFileMode;
   const hasChanges = policy !== savedPolicy;
+
+  const DEFAULT_POLICY = JSON.stringify({
+    acls: [
+      { action: "accept", src: ["*"], dst: ["*:*"] },
+    ],
+    ssh: [
+      { action: "accept", src: ["autogroup:member"], dst: ["autogroup:self"], users: ["root", "autogroup:nonroot"] },
+      { action: "accept", src: ["autogroup:member"], dst: ["autogroup:tagged"], users: ["root", "autogroup:nonroot"] },
+    ],
+  }, null, 2);
 
   const loadPolicy = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await getPolicy();
-      setLocalPolicy(data.policy);
-      setSavedPolicy(data.policy);
-      setUpdatedAt(data.updated_at);
+      const [data, info] = await Promise.all([getPolicy(), getServerInfo()]);
+      setPolicyMode(info.policyMode);
+      if (data.policy) {
+        setLocalPolicy(data.policy);
+        setSavedPolicy(data.policy);
+        setUpdatedAt(data.updated_at);
+      } else {
+        setLocalPolicy(DEFAULT_POLICY);
+        setSavedPolicy("");
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load policy");
+      // If fetching policy fails (e.g. no policy set yet in database mode),
+      // pre-populate with the default so the user can save it.
+      try {
+        const info = await getServerInfo();
+        setPolicyMode(info.policyMode);
+      } catch { /* ignore */ }
+      setLocalPolicy(DEFAULT_POLICY);
+      setSavedPolicy("");
     } finally {
       setLoading(false);
     }
@@ -85,12 +111,12 @@ export function ACLPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {perms.canWriteACL && hasChanges && (
+          {canEdit && hasChanges && (
             <button className="ghost sm" onClick={handleReset}>
               Discard
             </button>
           )}
-          {perms.canWriteACL && (
+          {canEdit && (
             <button
               onClick={handleSave}
               disabled={saving || !hasChanges}
@@ -108,8 +134,10 @@ export function ACLPage() {
               {saving ? "Saving…" : "Save"}
             </button>
           )}
-          {!perms.canWriteACL && (
-            <span className="text-sm text-tertiary">Read-only</span>
+          {!canEdit && (
+            <span className="text-sm text-tertiary">
+              {isFileMode ? "File-based policy (read-only)" : "Read-only"}
+            </span>
           )}
         </div>
       </div>
@@ -152,11 +180,11 @@ export function ACLPage() {
         {/* Editor with syntax highlighting */}
         <Editor
           value={policy}
-          onValueChange={perms.canWriteACL ? setLocalPolicy : () => {}}
+          onValueChange={canEdit ? setLocalPolicy : () => {}}
           highlight={(code) => Prism.highlight(code, Prism.languages.json, "json")}
           padding={16}
           className="policy-editor"
-          disabled={!perms.canWriteACL}
+          disabled={!canEdit}
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: "0.8125rem",
