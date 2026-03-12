@@ -1,6 +1,7 @@
 package v2
 
 import (
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -13,6 +14,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
+	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/views"
 )
@@ -711,6 +713,295 @@ func ipSetToPrefixStringList(ips *netipx.IPSet) []string {
 	}
 
 	return out
+}
+
+// compileGrantRules compiles grant rules into FilterRule entries.
+// Grants with "ip" produce FilterRule entries with DstPorts set.
+// Grants with "app" produce FilterRule entries with CapGrant set.
+// Grants with both produce separate FilterRule entries for each
+// (DstPorts and CapGrant are mutually exclusive on a single FilterRule).
+func (pol *Policy) compileGrantRules(
+	users types.Users,
+	nodes views.Slice[types.NodeView],
+) ([]tailcfg.FilterRule, error) {
+	if pol == nil || len(pol.Grants) == 0 {
+		return nil, nil
+	}
+
+	var rules []tailcfg.FilterRule
+
+	for _, grant := range pol.Grants {
+		if len(grant.App) == 0 && len(grant.IP) == 0 {
+			continue
+		}
+
+		srcIPs, err := grant.Sources.Resolve(pol, users, nodes)
+		if err != nil {
+			log.Trace().Caller().Err(err).Msg("resolving grant source ips")
+		}
+
+		if srcIPs == nil || len(srcIPs.Prefixes()) == 0 {
+			continue
+		}
+
+		srcIPStrs := ipSetToPrefixStringList(srcIPs)
+
+		// Resolve all destination IPs once for both ip and app rules.
+		dstPrefixes := resolveGrantDsts(pol, grant.Destinations, users, nodes)
+		if len(dstPrefixes) == 0 {
+			continue
+		}
+
+		// Compile "ip" rules → FilterRule with DstPorts
+		if len(grant.IP) > 0 {
+			rules = append(rules, compileGrantIPRules(srcIPStrs, dstPrefixes, grant.IP)...)
+		}
+
+		// Compile "app" rules → FilterRule with CapGrant
+		if len(grant.App) > 0 {
+			capMap := buildCapMap(grant.App)
+			rules = append(rules, tailcfg.FilterRule{
+				SrcIPs: srcIPStrs,
+				CapGrant: []tailcfg.CapGrant{
+					{
+						Dsts:   dstPrefixes,
+						CapMap: capMap,
+					},
+				},
+			})
+		}
+	}
+
+	return rules, nil
+}
+
+// compileGrantRulesForNode compiles grant rules for a specific node,
+// handling autogroup:self by resolving it to same-user nodes.
+func (pol *Policy) compileGrantRulesForNode(
+	users types.Users,
+	node types.NodeView,
+	nodes views.Slice[types.NodeView],
+) ([]tailcfg.FilterRule, error) {
+	if pol == nil || len(pol.Grants) == 0 {
+		return nil, nil
+	}
+
+	var rules []tailcfg.FilterRule
+
+	for _, grant := range pol.Grants {
+		if len(grant.App) == 0 && len(grant.IP) == 0 {
+			continue
+		}
+
+		// Check for autogroup:self in destinations.
+		var autogroupSelfDsts, otherDsts []Alias
+		for _, dst := range grant.Destinations {
+			if ag, ok := dst.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				autogroupSelfDsts = append(autogroupSelfDsts, dst)
+			} else {
+				otherDsts = append(otherDsts, dst)
+			}
+		}
+
+		srcIPs, err := grant.Sources.Resolve(pol, users, nodes)
+		if err != nil {
+			log.Trace().Caller().Err(err).Msg("resolving grant source ips")
+		}
+
+		if srcIPs == nil || len(srcIPs.Prefixes()) == 0 {
+			continue
+		}
+
+		// Handle autogroup:self destinations.
+		if len(autogroupSelfDsts) > 0 && !node.IsTagged() && node.User().Valid() {
+			selfSrcIPs, selfDstPrefixes := resolveGrantAutogroupSelf(
+				srcIPs, node, nodes,
+			)
+			if len(selfDstPrefixes) > 0 && len(selfSrcIPs) > 0 {
+				if len(grant.IP) > 0 {
+					rules = append(rules, compileGrantIPRules(
+						selfSrcIPs, selfDstPrefixes, grant.IP,
+					)...)
+				}
+
+				if len(grant.App) > 0 {
+					capMap := buildCapMap(grant.App)
+					rules = append(rules, tailcfg.FilterRule{
+						SrcIPs: selfSrcIPs,
+						CapGrant: []tailcfg.CapGrant{
+							{
+								Dsts:   selfDstPrefixes,
+								CapMap: capMap,
+							},
+						},
+					})
+				}
+			}
+		}
+
+		// Handle non-self destinations.
+		if len(otherDsts) > 0 {
+			srcIPStrs := ipSetToPrefixStringList(srcIPs)
+			dstPrefixes := resolveGrantDsts(pol, otherDsts, users, nodes)
+			if len(dstPrefixes) > 0 {
+				if len(grant.IP) > 0 {
+					rules = append(rules, compileGrantIPRules(
+						srcIPStrs, dstPrefixes, grant.IP,
+					)...)
+				}
+
+				if len(grant.App) > 0 {
+					capMap := buildCapMap(grant.App)
+					rules = append(rules, tailcfg.FilterRule{
+						SrcIPs: srcIPStrs,
+						CapGrant: []tailcfg.CapGrant{
+							{
+								Dsts:   dstPrefixes,
+								CapMap: capMap,
+							},
+						},
+					})
+				}
+			}
+		}
+	}
+
+	return rules, nil
+}
+
+// resolveGrantDsts resolves a list of destination aliases to IP prefixes for grants.
+func resolveGrantDsts(
+	pol *Policy,
+	dsts []Alias,
+	users types.Users,
+	nodes views.Slice[types.NodeView],
+) []netip.Prefix {
+	var allPrefixes []netip.Prefix
+
+	for _, dst := range dsts {
+		if _, isWildcard := dst.(Asterix); isWildcard {
+			return []netip.Prefix{tsaddr.AllIPv4(), tsaddr.AllIPv6()}
+		}
+
+		dstIPs, err := dst.Resolve(pol, users, nodes)
+		if err != nil {
+			log.Trace().Caller().Err(err).Msg("resolving grant destination ips")
+			continue
+		}
+
+		if dstIPs != nil {
+			allPrefixes = append(allPrefixes, dstIPs.Prefixes()...)
+		}
+	}
+
+	return allPrefixes
+}
+
+// resolveGrantAutogroupSelf resolves autogroup:self destinations and
+// filters sources to same-user untagged nodes.
+// Returns the filtered source IP strings and destination prefixes.
+func resolveGrantAutogroupSelf(
+	srcIPs *netipx.IPSet,
+	node types.NodeView,
+	nodes views.Slice[types.NodeView],
+) (srcIPStrs []string, dstPrefixes []netip.Prefix) {
+	var selfDstBuilder netipx.IPSetBuilder
+
+	for _, n := range nodes.All() {
+		if !n.IsTagged() && n.User().ID() == node.User().ID() {
+			n.AppendToIPSet(&selfDstBuilder)
+		}
+	}
+
+	selfDstSet, err := selfDstBuilder.IPSet()
+	if err != nil || selfDstSet == nil || len(selfDstSet.Prefixes()) == 0 {
+		return nil, nil
+	}
+
+	// Filter sources to only same-user untagged nodes.
+	var filteredSrcBuilder netipx.IPSetBuilder
+
+	for _, n := range nodes.All() {
+		if !n.IsTagged() && n.User().ID() == node.User().ID() {
+			if slices.ContainsFunc(n.IPs(), srcIPs.Contains) {
+				n.AppendToIPSet(&filteredSrcBuilder)
+			}
+		}
+	}
+
+	filteredSrc, err := filteredSrcBuilder.IPSet()
+	if err != nil || filteredSrc == nil || len(filteredSrc.Prefixes()) == 0 {
+		return nil, nil
+	}
+
+	return ipSetToPrefixStringList(filteredSrc), selfDstSet.Prefixes()
+}
+
+// buildCapMap builds a tailcfg.PeerCapMap from a grant's app field.
+func buildCapMap(app map[string][]stdjson.RawMessage) tailcfg.PeerCapMap {
+	capMap := make(tailcfg.PeerCapMap)
+	for capName, msgs := range app {
+		cap := tailcfg.PeerCapability(capName)
+		for _, msg := range msgs {
+			capMap[cap] = append(capMap[cap], tailcfg.RawMessage(msg))
+		}
+	}
+
+	return capMap
+}
+
+// compileGrantIPRules compiles the "ip" field of a grant into FilterRule
+// entries with DstPorts set. Each unique set of protocols produces a
+// separate FilterRule.
+func compileGrantIPRules(
+	srcIPs []string,
+	dstPrefixes []netip.Prefix,
+	specs GrantIPSpecs,
+) []tailcfg.FilterRule {
+	// Group specs by protocol to produce minimal FilterRules.
+	type protoGroup struct {
+		protocols []int
+		ports     []tailcfg.PortRange
+	}
+
+	groups := make(map[string]*protoGroup)
+
+	for _, spec := range specs {
+		protocols := spec.Protocol.parseProtocol()
+
+		// Build a key for grouping.
+		key := fmt.Sprint(protocols)
+		g, ok := groups[key]
+		if !ok {
+			g = &protoGroup{protocols: protocols}
+			groups[key] = g
+		}
+
+		g.ports = append(g.ports, spec.Ports...)
+	}
+
+	var rules []tailcfg.FilterRule
+
+	for _, g := range groups {
+		var destPorts []tailcfg.NetPortRange
+
+		for _, prefix := range dstPrefixes {
+			for _, port := range g.ports {
+				destPorts = append(destPorts, tailcfg.NetPortRange{
+					IP:    prefix.String(),
+					Ports: port,
+				})
+			}
+		}
+
+		rules = append(rules, tailcfg.FilterRule{
+			SrcIPs:   srcIPs,
+			DstPorts: destPorts,
+			IPProto:  g.protocols,
+		})
+	}
+
+	return rules
 }
 
 // filterRuleKey generates a unique key for merging based on SrcIPs and IPProto.

@@ -30,6 +30,21 @@ export function ACLPage() {
       { action: "accept", src: ["autogroup:member"], dst: ["autogroup:self"], users: ["root", "autogroup:nonroot"] },
       { action: "accept", src: ["autogroup:member"], dst: ["autogroup:tagged"], users: ["root", "autogroup:nonroot"] },
     ],
+    nodeAttrs: [
+      {
+        target: ["autogroup:member"],
+        attr: ["drive:share", "drive:access"],
+      },
+    ],
+    grants: [
+      {
+        src: ["autogroup:member"],
+        dst: ["autogroup:self"],
+        app: {
+          "tailscale.com/cap/drive": [{ shares: ["*"], access: "rw" }],
+        },
+      },
+    ],
   }, null, 2);
 
   const loadPolicy = useCallback(async () => {

@@ -4283,3 +4283,358 @@ func TestSSHCheckPeriodPolicyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGrantIPSpec(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    GrantIPSpec
+		wantErr bool
+	}{
+		{
+			name:  "wildcard",
+			input: "*",
+			want: GrantIPSpec{
+				Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+		},
+		{
+			name:  "single port",
+			input: "443",
+			want: GrantIPSpec{
+				Ports: []tailcfg.PortRange{{First: 443, Last: 443}},
+			},
+		},
+		{
+			name:  "port range",
+			input: "80-443",
+			want: GrantIPSpec{
+				Ports: []tailcfg.PortRange{{First: 80, Last: 443}},
+			},
+		},
+		{
+			name:  "tcp with port",
+			input: "tcp:443",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameTCP,
+				Ports:    []tailcfg.PortRange{{First: 443, Last: 443}},
+			},
+		},
+		{
+			name:  "tcp with range",
+			input: "tcp:80-443",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameTCP,
+				Ports:    []tailcfg.PortRange{{First: 80, Last: 443}},
+			},
+		},
+		{
+			name:  "udp with wildcard",
+			input: "udp:*",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameUDP,
+				Ports:    []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+		},
+		{
+			name:  "icmp with wildcard",
+			input: "icmp:*",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameICMP,
+				Ports:    []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+		},
+		{
+			name:  "ipv6-icmp with wildcard",
+			input: "ipv6-icmp:*",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameIPv6ICMP,
+				Ports:    []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+		},
+		{
+			name:  "TCP uppercase normalized",
+			input: "TCP:443",
+			want: GrantIPSpec{
+				Protocol: ProtocolNameTCP,
+				Ports:    []tailcfg.PortRange{{First: 443, Last: 443}},
+			},
+		},
+		{
+			name:    "icmp with specific port rejected",
+			input:   "icmp:80",
+			wantErr: true,
+		},
+		{
+			name:    "igmp with specific port rejected",
+			input:   "igmp:80",
+			wantErr: true,
+		},
+		{
+			name:    "invalid protocol",
+			input:   "bogus:443",
+			wantErr: true,
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGrantIPSpec(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGrantIPSpecString(t *testing.T) {
+	tests := []struct {
+		name string
+		spec GrantIPSpec
+		want string
+	}{
+		{
+			name: "wildcard no protocol",
+			spec: GrantIPSpec{
+				Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+			want: "*",
+		},
+		{
+			name: "single port no protocol",
+			spec: GrantIPSpec{
+				Ports: []tailcfg.PortRange{{First: 443, Last: 443}},
+			},
+			want: "443",
+		},
+		{
+			name: "tcp with port",
+			spec: GrantIPSpec{
+				Protocol: ProtocolNameTCP,
+				Ports:    []tailcfg.PortRange{{First: 443, Last: 443}},
+			},
+			want: "tcp:443",
+		},
+		{
+			name: "icmp wildcard",
+			spec: GrantIPSpec{
+				Protocol: ProtocolNameICMP,
+				Ports:    []tailcfg.PortRange{tailcfg.PortRangeAny},
+			},
+			want: "icmp:*",
+		},
+		{
+			name: "port range",
+			spec: GrantIPSpec{
+				Ports: []tailcfg.PortRange{{First: 80, Last: 443}},
+			},
+			want: "80-443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.spec.String())
+		})
+	}
+}
+
+func TestGrantIPSpecsUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    GrantIPSpecs
+		wantErr bool
+	}{
+		{
+			name:  "wildcard only",
+			input: `["*"]`,
+			want: GrantIPSpecs{
+				{Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+			},
+		},
+		{
+			name:  "multiple specs",
+			input: `["tcp:443", "udp:*", "icmp:*"]`,
+			want: GrantIPSpecs{
+				{Protocol: ProtocolNameTCP, Ports: []tailcfg.PortRange{{First: 443, Last: 443}}},
+				{Protocol: ProtocolNameUDP, Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+				{Protocol: ProtocolNameICMP, Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+			},
+		},
+		{
+			name:    "invalid entry",
+			input:   `["bogus:443"]`,
+			wantErr: true,
+		},
+		{
+			name:    "not an array",
+			input:   `"tcp:443"`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got GrantIPSpecs
+			err := json.Unmarshal([]byte(tt.input), &got)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGrantIPSpecsMarshalRoundTrip(t *testing.T) {
+	original := GrantIPSpecs{
+		{Protocol: ProtocolNameTCP, Ports: []tailcfg.PortRange{{First: 443, Last: 443}}},
+		{Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+		{Protocol: ProtocolNameICMP, Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+	assert.Equal(t, `["tcp:443","*","icmp:*"]`, string(data))
+
+	var roundTripped GrantIPSpecs
+	err = json.Unmarshal(data, &roundTripped)
+	require.NoError(t, err)
+	assert.Equal(t, original, roundTripped)
+}
+
+func TestUnmarshalPolicyWithGrants(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  string
+		wantErr bool
+		check   func(t *testing.T, pol *Policy)
+	}{
+		{
+			name: "grant with app only",
+			policy: `{
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"app": {
+						"tailscale.com/cap/drive": [{
+							"shares": ["*"]
+						}]
+					}
+				}]
+			}`,
+			check: func(t *testing.T, pol *Policy) {
+				require.Len(t, pol.Grants, 1)
+				assert.Len(t, pol.Grants[0].App, 1)
+				assert.Nil(t, pol.Grants[0].IP)
+			},
+		},
+		{
+			name: "grant with ip only",
+			policy: `{
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"ip": ["tcp:443", "icmp:*"]
+				}]
+			}`,
+			check: func(t *testing.T, pol *Policy) {
+				require.Len(t, pol.Grants, 1)
+				require.Len(t, pol.Grants[0].IP, 2)
+				assert.Equal(t, ProtocolNameTCP, pol.Grants[0].IP[0].Protocol)
+				assert.Equal(t, []tailcfg.PortRange{{First: 443, Last: 443}}, pol.Grants[0].IP[0].Ports)
+				assert.Equal(t, ProtocolNameICMP, pol.Grants[0].IP[1].Protocol)
+				assert.Nil(t, pol.Grants[0].App)
+			},
+		},
+		{
+			name: "grant with both ip and app",
+			policy: `{
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"ip": ["*"],
+					"app": {
+						"tailscale.com/cap/drive": [{
+							"shares": ["*"]
+						}]
+					}
+				}]
+			}`,
+			check: func(t *testing.T, pol *Policy) {
+				require.Len(t, pol.Grants, 1)
+				require.Len(t, pol.Grants[0].IP, 1)
+				assert.Equal(t, GrantIPSpec{Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}}, pol.Grants[0].IP[0])
+				assert.Len(t, pol.Grants[0].App, 1)
+			},
+		},
+		{
+			name: "grant with HuJSON comments",
+			policy: `{
+				// Taildrive sharing
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"ip": ["tcp:443"], // HTTPS only
+					"app": {
+						"tailscale.com/cap/drive": [{
+							"shares": ["*"],
+						}],
+					},
+				}],
+			}`,
+			check: func(t *testing.T, pol *Policy) {
+				require.Len(t, pol.Grants, 1)
+				require.Len(t, pol.Grants[0].IP, 1)
+				assert.Equal(t, ProtocolNameTCP, pol.Grants[0].IP[0].Protocol)
+			},
+		},
+		{
+			name: "grant with invalid ip spec",
+			policy: `{
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"ip": ["bogus:443"]
+				}]
+			}`,
+			wantErr: true,
+		},
+		{
+			name: "grant with icmp specific port rejected",
+			policy: `{
+				"grants": [{
+					"src": ["autogroup:member"],
+					"dst": ["autogroup:self"],
+					"ip": ["icmp:80"]
+				}]
+			}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pol, err := unmarshalPolicy([]byte(tt.policy))
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, pol)
+			if tt.check != nil {
+				tt.check(t, pol)
+			}
+		})
+	}
+}

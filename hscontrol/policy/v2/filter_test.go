@@ -3088,3 +3088,528 @@ func TestGroupSourcesByUser(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileGrantRules(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1"},
+		{Model: gorm.Model{ID: 2}, Name: "user2"},
+	}
+
+	nodes := types.Nodes{
+		{
+			User: new(users[0]),
+			IPv4: ap("100.64.0.1"),
+		},
+		{
+			User: new(users[0]),
+			IPv4: ap("100.64.0.2"),
+		},
+		{
+			User: new(users[1]),
+			IPv4: ap("100.64.0.3"),
+		},
+	}
+
+	t.Run("app-only-grant-wildcard-dst", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{Asterix(0)},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"],"access":"rw"}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		// Should have no DstPorts (app grants use CapGrant, not DstPorts)
+		assert.Empty(t, rule.DstPorts)
+		// Should have CapGrant
+		require.Len(t, rule.CapGrant, 1)
+		// CapGrant should have wildcard destinations (AllIPv4 + AllIPv6)
+		assert.Len(t, rule.CapGrant[0].Dsts, 2)
+		// CapMap should contain the drive capability
+		require.Contains(t, rule.CapGrant[0].CapMap, tailcfg.PeerCapability("tailscale.com/cap/drive"))
+		capMsgs := rule.CapGrant[0].CapMap[tailcfg.PeerCapability("tailscale.com/cap/drive")]
+		require.Len(t, capMsgs, 1)
+		assert.JSONEq(t, `{"shares":["*"],"access":"rw"}`, string(capMsgs[0]))
+		// Sources should include all member nodes
+		assert.NotEmpty(t, rule.SrcIPs)
+	})
+
+	t.Run("app-only-grant-specific-user-dst", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{up("user1@")},
+					Destinations: Aliases{up("user2@")},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["docs"],"access":"ro"}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		require.Len(t, rule.CapGrant, 1)
+		// Destinations should only contain user2's IPs
+		for _, prefix := range rule.CapGrant[0].Dsts {
+			assert.True(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"destination should contain user2's IP 100.64.0.3, got %s", prefix)
+		}
+		// Sources should only contain user1's IPs
+		for _, srcIP := range rule.SrcIPs {
+			prefix := netip.MustParsePrefix(srcIP)
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"source should NOT contain user2's IP")
+		}
+	})
+
+	t.Run("ip-only-grant-wildcard", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{up("user1@")},
+					Destinations: Aliases{up("user2@")},
+					IP: GrantIPSpecs{
+						{Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		// ip-only grants should have DstPorts, not CapGrant
+		assert.NotEmpty(t, rule.DstPorts)
+		assert.Empty(t, rule.CapGrant)
+		// Should have default protocols (TCP+UDP+ICMP+ICMPv6)
+		assert.Equal(t, []int{ProtocolTCP, ProtocolUDP, ProtocolICMP, ProtocolIPv6ICMP}, rule.IPProto)
+	})
+
+	t.Run("ip-only-grant-specific-port", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{up("user1@")},
+					Destinations: Aliases{up("user2@")},
+					IP: GrantIPSpecs{
+						{
+							Protocol: ProtocolNameTCP,
+							Ports:    []tailcfg.PortRange{{First: 443, Last: 443}},
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		assert.NotEmpty(t, rule.DstPorts)
+		assert.Empty(t, rule.CapGrant)
+		assert.Equal(t, []int{ProtocolTCP}, rule.IPProto)
+		// Check DstPorts contain the correct port
+		found := false
+		for _, dp := range rule.DstPorts {
+			if dp.Ports.First == 443 && dp.Ports.Last == 443 {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "DstPorts should contain port 443")
+	})
+
+	t.Run("ip-and-app-grant-produces-separate-rules", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{Asterix(0)},
+					IP: GrantIPSpecs{
+						{
+							Protocol: ProtocolNameTCP,
+							Ports:    []tailcfg.PortRange{{First: 80, Last: 80}},
+						},
+					},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"]}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		// Should produce 2 rules: one for ip (DstPorts), one for app (CapGrant)
+		require.Len(t, rules, 2)
+
+		var ipRule, appRule *tailcfg.FilterRule
+		for i := range rules {
+			if len(rules[i].DstPorts) > 0 {
+				ipRule = &rules[i]
+			}
+			if len(rules[i].CapGrant) > 0 {
+				appRule = &rules[i]
+			}
+		}
+
+		require.NotNil(t, ipRule, "should have an ip rule with DstPorts")
+		require.NotNil(t, appRule, "should have an app rule with CapGrant")
+
+		// ip rule should not have CapGrant
+		assert.Empty(t, ipRule.CapGrant)
+		// app rule should not have DstPorts
+		assert.Empty(t, appRule.DstPorts)
+	})
+
+	t.Run("ip-different-protocols-produce-separate-rules", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{up("user1@")},
+					Destinations: Aliases{up("user2@")},
+					IP: GrantIPSpecs{
+						{Protocol: ProtocolNameTCP, Ports: []tailcfg.PortRange{{First: 443, Last: 443}}},
+						{Protocol: ProtocolNameUDP, Ports: []tailcfg.PortRange{{First: 53, Last: 53}}},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		// TCP and UDP have different protocol numbers, so should produce 2 FilterRules
+		require.Len(t, rules, 2)
+
+		var tcpRule, udpRule *tailcfg.FilterRule
+		for i := range rules {
+			if slices.Contains(rules[i].IPProto, ProtocolTCP) {
+				tcpRule = &rules[i]
+			}
+			if slices.Contains(rules[i].IPProto, ProtocolUDP) {
+				udpRule = &rules[i]
+			}
+		}
+
+		require.NotNil(t, tcpRule, "should have a TCP rule")
+		require.NotNil(t, udpRule, "should have a UDP rule")
+
+		// TCP rule should have port 443
+		foundTCP := false
+		for _, dp := range tcpRule.DstPorts {
+			if dp.Ports.First == 443 && dp.Ports.Last == 443 {
+				foundTCP = true
+				break
+			}
+		}
+		assert.True(t, foundTCP, "TCP rule should have port 443")
+
+		// UDP rule should have port 53
+		foundUDP := false
+		for _, dp := range udpRule.DstPorts {
+			if dp.Ports.First == 53 && dp.Ports.Last == 53 {
+				foundUDP = true
+				break
+			}
+		}
+		assert.True(t, foundUDP, "UDP rule should have port 53")
+	})
+
+	t.Run("ip-same-protocol-accumulates-ports", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{up("user1@")},
+					Destinations: Aliases{up("user2@")},
+					IP: GrantIPSpecs{
+						{Protocol: ProtocolNameTCP, Ports: []tailcfg.PortRange{{First: 443, Last: 443}}},
+						{Protocol: ProtocolNameTCP, Ports: []tailcfg.PortRange{{First: 80, Last: 80}}},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		// Same protocol, so ports should be accumulated into a single FilterRule
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		assert.Equal(t, []int{ProtocolTCP}, rule.IPProto)
+
+		// Should contain both ports 443 and 80
+		ports := make(map[uint16]bool)
+		for _, dp := range rule.DstPorts {
+			ports[dp.Ports.First] = true
+		}
+		assert.True(t, ports[443], "should contain port 443")
+		assert.True(t, ports[80], "should contain port 80")
+	})
+
+	t.Run("grant-no-ip-no-app-skipped", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{Asterix(0)},
+				},
+			},
+		}
+
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		assert.Empty(t, rules, "grants with no ip and no app should be skipped")
+	})
+
+	t.Run("nil-policy-returns-nil", func(t *testing.T) {
+		var pol *Policy
+		rules, err := pol.compileGrantRules(users, nodes.ViewSlice())
+		require.NoError(t, err)
+		assert.Nil(t, rules)
+	})
+}
+
+func TestCompileGrantRulesForNodeWithAutogroupSelf(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1"},
+		{Model: gorm.Model{ID: 2}, Name: "user2"},
+	}
+
+	nodes := types.Nodes{
+		{
+			User: new(users[0]),
+			IPv4: ap("100.64.0.1"),
+		},
+		{
+			User: new(users[0]),
+			IPv4: ap("100.64.0.2"),
+		},
+		{
+			User: new(users[1]),
+			IPv4: ap("100.64.0.3"),
+		},
+		// Tagged node for user1 - should be excluded from autogroup:self
+		{
+			User: &users[0],
+			IPv4: ap("100.64.0.4"),
+			Tags: []string{"tag:server"},
+		},
+	}
+
+	t.Run("app-only-user1-sees-only-user1-peers", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{agp("autogroup:self")},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"],"access":"rw"}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		node1 := nodes[0].View()
+		rules, err := pol.compileGrantRulesForNode(users, node1, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		require.Len(t, rule.CapGrant, 1)
+
+		// Destinations should only include user1's untagged nodes
+		for _, prefix := range rule.CapGrant[0].Dsts {
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"user1's grant destinations should NOT include user2's IP")
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.4")),
+				"user1's grant destinations should NOT include tagged node's IP")
+		}
+
+		// Sources should only include user1's untagged nodes
+		for _, srcIP := range rule.SrcIPs {
+			prefix := netip.MustParsePrefix(srcIP)
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"user1's grant sources should NOT include user2's IP")
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.4")),
+				"user1's grant sources should NOT include tagged node's IP")
+		}
+
+		// Check drive capability is present
+		require.Contains(t, rule.CapGrant[0].CapMap, tailcfg.PeerCapability("tailscale.com/cap/drive"))
+	})
+
+	t.Run("app-only-user2-sees-only-user2-peers", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{agp("autogroup:self")},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"],"access":"rw"}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		node3 := nodes[2].View()
+		rules, err := pol.compileGrantRulesForNode(users, node3, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		require.Len(t, rule.CapGrant, 1)
+
+		// Destinations should only include user2's IP
+		for _, prefix := range rule.CapGrant[0].Dsts {
+			assert.True(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"user2's grant destinations should include 100.64.0.3")
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.1")),
+				"user2's grant destinations should NOT include user1's IP")
+		}
+	})
+
+	t.Run("tagged-node-gets-no-self-grants", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{agp("autogroup:self")},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"],"access":"rw"}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		taggedNode := nodes[3].View()
+		rules, err := pol.compileGrantRulesForNode(users, taggedNode, nodes.ViewSlice())
+		require.NoError(t, err)
+		assert.Empty(t, rules, "tagged nodes should not receive autogroup:self grant rules")
+	})
+
+	t.Run("ip-with-autogroup-self", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{agp("autogroup:self")},
+					IP: GrantIPSpecs{
+						{
+							Protocol: ProtocolNameTCP,
+							Ports:    []tailcfg.PortRange{{First: 22, Last: 22}},
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		node1 := nodes[0].View()
+		rules, err := pol.compileGrantRulesForNode(users, node1, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+
+		rule := rules[0]
+		// ip grants produce DstPorts, not CapGrant
+		assert.NotEmpty(t, rule.DstPorts)
+		assert.Empty(t, rule.CapGrant)
+		assert.Equal(t, []int{ProtocolTCP}, rule.IPProto)
+
+		// DstPorts should only include user1's untagged nodes
+		for _, dp := range rule.DstPorts {
+			prefix := netip.MustParsePrefix(dp.IP)
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+				"user1's grant DstPorts should NOT include user2's IP, got %s", dp.IP)
+			assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.4")),
+				"user1's grant DstPorts should NOT include tagged node's IP, got %s", dp.IP)
+		}
+	})
+
+	t.Run("ip-and-app-with-autogroup-self", func(t *testing.T) {
+		pol := &Policy{
+			Grants: []Grant{
+				{
+					Sources:      Aliases{agp("autogroup:member")},
+					Destinations: Aliases{agp("autogroup:self")},
+					IP: GrantIPSpecs{
+						{Ports: []tailcfg.PortRange{tailcfg.PortRangeAny}},
+					},
+					App: map[string][]json.RawMessage{
+						"tailscale.com/cap/drive": {
+							json.RawMessage(`{"shares":["*"]}`),
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, pol.validate())
+
+		node1 := nodes[0].View()
+		rules, err := pol.compileGrantRulesForNode(users, node1, nodes.ViewSlice())
+		require.NoError(t, err)
+		// Should have 2 rules: one for ip, one for app
+		require.Len(t, rules, 2)
+
+		var hasIP, hasApp bool
+		for _, r := range rules {
+			if len(r.DstPorts) > 0 {
+				hasIP = true
+			}
+			if len(r.CapGrant) > 0 {
+				hasApp = true
+			}
+		}
+		assert.True(t, hasIP, "should have ip rule")
+		assert.True(t, hasApp, "should have app rule")
+	})
+}

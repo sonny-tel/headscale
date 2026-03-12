@@ -1653,6 +1653,163 @@ type Policy struct {
 	AutoApprovers AutoApproverPolicy `json:"autoApprovers"`
 	SSHs          []SSH              `json:"ssh,omitempty"`
 	NodeAttrs     []NodeAttrRule     `json:"nodeAttrs,omitempty"`
+	Grants        []Grant            `json:"grants,omitempty"`
+}
+
+// Grant defines a grant rule that maps source nodes to destination nodes with
+// network layer capabilities (ip), application layer capabilities (app), or both.
+// A grant with "ip" produces FilterRule entries with DstPorts set.
+// A grant with "app" produces FilterRule entries with CapGrant set.
+// A grant with both produces separate FilterRule entries for each (since
+// DstPorts and CapGrant are mutually exclusive on a single FilterRule).
+type Grant struct {
+	Sources      Aliases                         `json:"src"`
+	Destinations Aliases                         `json:"dst"`
+	IP           GrantIPSpecs                    `json:"ip,omitempty"`
+	App          map[string][]stdjson.RawMessage `json:"app,omitempty"`
+}
+
+// GrantIPSpec represents a single network layer capability entry from
+// the "ip" field in a grant. It specifies an optional protocol and port ranges.
+// Examples: "*", "443", "80-443", "tcp:443", "tcp:80-443", "icmp:*".
+type GrantIPSpec struct {
+	Protocol Protocol
+	Ports    []tailcfg.PortRange
+}
+
+// GrantIPSpecs is a slice of GrantIPSpec entries parsed from the grant "ip" field.
+type GrantIPSpecs []GrantIPSpec
+
+// UnmarshalJSON parses the "ip" field from a JSON array of strings.
+func (g *GrantIPSpecs) UnmarshalJSON(b []byte) error {
+	var raw []string
+	if err := stdjson.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+
+	specs := make(GrantIPSpecs, 0, len(raw))
+	for _, entry := range raw {
+		spec, err := parseGrantIPSpec(entry)
+		if err != nil {
+			return fmt.Errorf("parsing grant ip spec %q: %w", entry, err)
+		}
+		specs = append(specs, spec)
+	}
+	*g = specs
+
+	return nil
+}
+
+// MarshalJSON writes the GrantIPSpecs back to a JSON array of strings.
+func (g GrantIPSpecs) MarshalJSON() ([]byte, error) {
+	strs := make([]string, 0, len(g))
+	for _, spec := range g {
+		strs = append(strs, spec.String())
+	}
+	return stdjson.Marshal(strs)
+}
+
+// String returns the string representation of a GrantIPSpec.
+func (s GrantIPSpec) String() string {
+	proto := string(s.Protocol)
+
+	portStr := formatPortRanges(s.Ports)
+
+	if proto == "" {
+		return portStr
+	}
+
+	return proto + ":" + portStr
+}
+
+// formatPortRanges formats port ranges back to string form.
+func formatPortRanges(ports []tailcfg.PortRange) string {
+	if len(ports) == 1 && ports[0].First == 0 && ports[0].Last == 65535 {
+		return "*"
+	}
+
+	var parts []string
+	for _, pr := range ports {
+		if pr.First == pr.Last {
+			parts = append(parts, strconv.FormatUint(uint64(pr.First), 10))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d-%d", pr.First, pr.Last))
+		}
+	}
+
+	return strings.Join(parts, ",")
+}
+
+// parseGrantIPSpec parses a single grant IP spec string like "*", "443",
+// "tcp:443", "tcp:80-443", "icmp:*".
+func parseGrantIPSpec(s string) (GrantIPSpec, error) {
+	s = strings.TrimSpace(s)
+
+	// Wildcard: all ports, default protocols
+	if s == "*" {
+		return GrantIPSpec{
+			Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
+		}, nil
+	}
+
+	// Check for protocol:port format
+	if idx := strings.Index(s, ":"); idx != -1 {
+		protoStr := strings.ToLower(s[:idx])
+		portStr := s[idx+1:]
+
+		proto := Protocol(protoStr)
+		if err := proto.validate(); err != nil {
+			return GrantIPSpec{}, fmt.Errorf("invalid protocol %q: %w", protoStr, err)
+		}
+
+		ports, err := parsePortRange(portStr)
+		if err != nil {
+			return GrantIPSpec{}, fmt.Errorf("invalid port range %q: %w", portStr, err)
+		}
+
+		// Validate protocol/port compatibility: non-TCP/UDP/SCTP only allow wildcard ports
+		if err := validateGrantIPProtocolPorts(proto, ports); err != nil {
+			return GrantIPSpec{}, err
+		}
+
+		return GrantIPSpec{
+			Protocol: proto,
+			Ports:    ports,
+		}, nil
+	}
+
+	// No protocol prefix: port or port range only
+	ports, err := parsePortRange(s)
+	if err != nil {
+		return GrantIPSpec{}, fmt.Errorf("invalid port range %q: %w", s, err)
+	}
+
+	return GrantIPSpec{
+		Ports: ports,
+	}, nil
+}
+
+// validateGrantIPProtocolPorts checks that only TCP, UDP, and SCTP can
+// specify individual ports; other protocols must use wildcard.
+func validateGrantIPProtocolPorts(proto Protocol, ports []tailcfg.PortRange) error {
+	supportsSpecificPorts := proto == ProtocolNameTCP ||
+		proto == ProtocolNameUDP ||
+		proto == ProtocolNameSCTP ||
+		proto == ""
+
+	if supportsSpecificPorts {
+		return nil
+	}
+
+	for _, pr := range ports {
+		if pr.First != 0 || pr.Last != 65535 {
+			return fmt.Errorf(
+				"%w: %q, only \"*\" is allowed",
+				ErrProtocolNoSpecificPorts, proto)
+		}
+	}
+
+	return nil
 }
 
 // NodeAttrRule maps target nodes to a set of capability attributes.
@@ -2138,6 +2295,46 @@ func (p *Policy) validate() error {
 		}
 	}
 
+	for _, grant := range p.Grants {
+		for _, src := range grant.Sources {
+			switch src := src.(type) {
+			case *Host:
+				if !p.Hosts.exist(*src) {
+					errs = append(errs, fmt.Errorf("%w: %q", ErrHostNotDefined, *src))
+				}
+			case *Group:
+				err := p.Groups.Contains(src)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			case *Tag:
+				err := p.TagOwners.Contains(src)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+
+		for _, dst := range grant.Destinations {
+			switch dst := dst.(type) {
+			case *Host:
+				if !p.Hosts.exist(*dst) {
+					errs = append(errs, fmt.Errorf("%w: %q", ErrHostNotDefined, *dst))
+				}
+			case *Group:
+				err := p.Groups.Contains(dst)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			case *Tag:
+				err := p.TagOwners.Contains(dst)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+	}
+
 	if len(errs) > 0 {
 		return multierr.New(errs...)
 	}
@@ -2538,6 +2735,21 @@ func (p *Policy) usesAutogroupSelf() bool {
 
 		for _, dest := range ssh.Destinations {
 			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+	}
+
+	// Check grant rules
+	for _, grant := range p.Grants {
+		for _, src := range grant.Sources {
+			if ag, ok := src.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+
+		for _, dst := range grant.Destinations {
+			if ag, ok := dst.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
 				return true
 			}
 		}

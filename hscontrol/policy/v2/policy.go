@@ -104,6 +104,14 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 		return false, fmt.Errorf("compiling filter rules: %w", err)
 	}
 
+	// Compile grant rules (e.g. Taildrive capability grants)
+	grantRules, err := pm.pol.compileGrantRules(pm.users, pm.nodes)
+	if err != nil {
+		return false, fmt.Errorf("compiling grant rules: %w", err)
+	}
+
+	filter = append(filter, grantRules...)
+
 	// Hash both the compiled filter AND the policy content together.
 	// This ensures filterHash changes when policy changes, even for autogroup:self
 	// where the compiled filter is always empty. This eliminates the need for
@@ -466,6 +474,14 @@ func (pm *PolicyManager) compileFilterRulesForNodeLocked(node types.NodeView) ([
 	if err != nil {
 		return nil, fmt.Errorf("compiling filter rules for node: %w", err)
 	}
+
+	// Compile per-node grant rules (e.g. Taildrive with autogroup:self)
+	grantRules, err := pm.pol.compileGrantRulesForNode(pm.users, node, pm.nodes)
+	if err != nil {
+		return nil, fmt.Errorf("compiling grant rules for node: %w", err)
+	}
+
+	rules = append(rules, grantRules...)
 
 	// Cache the unreduced compiled rules
 	pm.compiledFilterRulesMap[node.ID()] = rules
