@@ -716,3 +716,107 @@ export async function getDocContent(path: string): Promise<string> {
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
   return res.text();
 }
+
+// ── Debug endpoints ──
+
+export async function getDebugOverview(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/web/debug/overview`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDebugNodeStore(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/web/debug/nodestore`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDebugRoutes(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/web/debug/routes`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDebugDERP(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/web/debug/derp`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDebugConfig(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/web/debug/config`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDebugPolicy(): Promise<string> {
+  const res = await fetch(`${API_BASE}/web/debug/policy`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.text();
+}
+
+export async function getDebugFilter(): Promise<unknown[]> {
+  const res = await fetch(`${API_BASE}/web/debug/filter`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface SeedResult {
+  users: string[];
+  nodes: string[];
+  deviceExitNodes: string[];
+  vpnExitNodes: string[];
+}
+
+export async function seedDebugData(
+  users: number,
+  nodes: number,
+  deviceExitNodes: number,
+  vpnExitNodes: number,
+): Promise<SeedResult> {
+  const res = await fetch(`${API_BASE}/web/debug/seed`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ users, nodes, deviceExitNodes, vpnExitNodes }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface PurgeResult {
+  nodes: number;
+  users: number;
+}
+
+export async function purgeDebugData(): Promise<PurgeResult> {
+  const res = await fetch(`${API_BASE}/web/debug/purge`, {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function purgeSeededData(): Promise<PurgeResult> {
+  const res = await fetch(`${API_BASE}/web/debug/purge-seeded`, {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}

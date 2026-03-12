@@ -23,6 +23,7 @@ export interface Permissions {
   canViewSettings: boolean;
   canViewServices: boolean;
   canWriteServices: boolean;
+  canViewDebug: boolean;
 }
 
 const ADMIN: Permissions = {
@@ -41,6 +42,7 @@ const ADMIN: Permissions = {
   canViewSettings: true,
   canViewServices: true,
   canWriteServices: true,
+  canViewDebug: true,
 };
 
 const NETWORK_ADMIN: Permissions = {
@@ -59,6 +61,7 @@ const NETWORK_ADMIN: Permissions = {
   canViewSettings: true,
   canViewServices: true,
   canWriteServices: true, // Network setting like DNS
+  canViewDebug: false,
 };
 
 const IT_ADMIN: Permissions = {
@@ -77,6 +80,7 @@ const IT_ADMIN: Permissions = {
   canViewSettings: true,
   canViewServices: true,
   canWriteServices: false, // Read-only
+  canViewDebug: false,
 };
 
 const NO_ACCESS: Permissions = {
@@ -95,6 +99,7 @@ const NO_ACCESS: Permissions = {
   canViewSettings: false,
   canViewServices: false,
   canWriteServices: false,
+  canViewDebug: false,
 };
 
 export function getPermissions(role: string | undefined): Permissions {

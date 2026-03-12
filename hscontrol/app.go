@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof" // nolint
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -62,6 +63,7 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"tailscale.com/envknob"
+	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
@@ -1457,6 +1459,371 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(info) //nolint:errcheck
+		})
+
+		// ── Debug endpoints (admin-only, gated by debug_panel feature flag) ──
+		r.Route("/v1/web/debug", func(dr chi.Router) {
+			// Overview — node counts, users, policy, DERP, routes
+			dr.Get("/overview", func(w http.ResponseWriter, req *http.Request) {
+				overview := h.state.DebugOverviewJSON()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(overview) //nolint:errcheck
+			})
+
+			// Node store — full live node map with peer relationships
+			dr.Get("/nodestore", func(w http.ResponseWriter, req *http.Request) {
+				nodes := h.state.DebugNodeStoreJSON()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(nodes) //nolint:errcheck
+			})
+
+			// Routes — primary routes
+			dr.Get("/routes", func(w http.ResponseWriter, req *http.Request) {
+				routes := h.state.DebugRoutes()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(routes) //nolint:errcheck
+			})
+
+			// DERP map — regions and nodes
+			dr.Get("/derp", func(w http.ResponseWriter, req *http.Request) {
+				derpInfo := h.state.DebugDERPJSON()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(derpInfo) //nolint:errcheck
+			})
+
+			// Config — current server configuration (sanitised)
+			dr.Get("/config", func(w http.ResponseWriter, req *http.Request) {
+				config := h.state.DebugConfig()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(config) //nolint:errcheck
+			})
+
+			// Policy — raw HuJSON policy
+			dr.Get("/policy", func(w http.ResponseWriter, req *http.Request) {
+				policy, err := h.state.DebugPolicy()
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Write([]byte(policy)) //nolint:errcheck
+			})
+
+			// Filter rules — current ACL filter
+			dr.Get("/filter", func(w http.ResponseWriter, req *http.Request) {
+				filter, err := h.state.DebugFilter()
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(filter) //nolint:errcheck
+			})
+
+			// Seed fake data — creates test users and nodes
+			dr.Post("/seed", func(w http.ResponseWriter, req *http.Request) {
+				var params struct {
+					Users           int `json:"users"`
+					Nodes           int `json:"nodes"`
+					DeviceExitNodes int `json:"deviceExitNodes"`
+					VPNExitNodes    int `json:"vpnExitNodes"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&params); err != nil {
+					http.Error(w, "invalid request body", http.StatusBadRequest)
+					return
+				}
+				if params.Users < 1 {
+					params.Users = 3
+				}
+				if params.Nodes < 1 {
+					params.Nodes = 5
+				}
+				if params.Users > 20 {
+					params.Users = 20
+				}
+				if params.Nodes > 50 {
+					params.Nodes = 50
+				}
+				if params.DeviceExitNodes < 0 {
+					params.DeviceExitNodes = 0
+				}
+				if params.DeviceExitNodes > 10 {
+					params.DeviceExitNodes = 10
+				}
+				if params.VPNExitNodes < 0 {
+					params.VPNExitNodes = 0
+				}
+				if params.VPNExitNodes > 10 {
+					params.VPNExitNodes = 10
+				}
+
+				created := struct {
+					Users           []string `json:"users"`
+					Nodes           []string `json:"nodes"`
+					DeviceExitNodes []string `json:"deviceExitNodes"`
+					VPNExitNodes    []string `json:"vpnExitNodes"`
+				}{}
+
+				users := make([]*types.User, 0, params.Users)
+				fakeNames := []string{"alice", "bob", "charlie", "diana", "eve", "frank", "grace", "hank", "iris", "jack", "kate", "leo", "mona", "nick", "olive", "paul", "quinn", "rosa", "sam", "tina"}
+				for i := range params.Users {
+					name := fakeNames[i%len(fakeNames)]
+					if i >= len(fakeNames) {
+						name = fmt.Sprintf("%s-%d", name, i/len(fakeNames))
+					}
+					user, _, err := h.state.CreateUser(types.User{Name: name, Provider: "debug_seed"})
+					if err != nil {
+						existing, getErr := h.state.GetUserByName(name)
+						if getErr != nil {
+							continue
+						}
+						user = existing
+					}
+					users = append(users, user)
+					created.Users = append(created.Users, user.Name)
+				}
+
+				if len(users) == 0 {
+					http.Error(w, "failed to create any users", http.StatusInternalServerError)
+					return
+				}
+
+				fakeHosts := []string{"laptop", "desktop", "server", "workstation", "nas", "pi", "vm", "container", "gateway", "proxy"}
+				fakeOS := []string{"linux", "windows", "macOS", "iOS", "android"}
+				for i := range params.Nodes {
+					user := users[i%len(users)]
+					hostname := fmt.Sprintf("%s-%s-%d", user.Name, fakeHosts[i%len(fakeHosts)], i)
+
+					nodeKey := key.NewNode()
+					machineKey := key.NewMachine()
+					discoKey := key.NewDisco()
+
+					now := time.Now().UTC()
+					lastSeen := now.Add(-time.Duration(i*7) * time.Minute)
+					expiry := now.Add(180 * 24 * time.Hour)
+
+					hostinfo := tailcfg.Hostinfo{
+						OS:       fakeOS[i%len(fakeOS)],
+						Hostname: hostname,
+					}
+
+					node := types.Node{
+						MachineKey:     machineKey.Public(),
+						NodeKey:        nodeKey.Public(),
+						DiscoKey:       discoKey.Public(),
+						Hostname:       hostname,
+						GivenName:      hostname,
+						UserID:         &user.ID,
+						User:           user,
+						RegisterMethod: "debug_seed",
+						Expiry:         &expiry,
+						LastSeen:       &lastSeen,
+						Hostinfo:       &hostinfo,
+					}
+
+					ipv4, ipv6, err := h.state.AllocateNextIPs()
+					if err != nil {
+						continue
+					}
+					node.IPv4 = ipv4
+					node.IPv6 = ipv6
+
+					if err := h.state.SaveNodeDirect(&node); err != nil {
+						continue
+					}
+
+					created.Nodes = append(created.Nodes, hostname)
+				}
+
+				// Create device exit nodes — regular user devices sharing their connection
+				exitRoutes := []netip.Prefix{tsaddr.AllIPv4(), tsaddr.AllIPv6()}
+				deviceExitOS := []string{"linux", "windows", "macOS"}
+				deviceExitHosts := []string{"home-pc", "office-desktop", "media-server", "gaming-rig", "dev-box", "htpc", "backup-nas", "mini-pc", "old-laptop", "spare-tower"}
+				for i := range params.DeviceExitNodes {
+					user := users[i%len(users)]
+					hostname := fmt.Sprintf("%s-%s-%d", user.Name, deviceExitHosts[i%len(deviceExitHosts)], i)
+
+					nodeKey := key.NewNode()
+					machineKey := key.NewMachine()
+					discoKey := key.NewDisco()
+
+					now := time.Now().UTC()
+					lastSeen := now.Add(-time.Duration(i*11) * time.Minute)
+					expiry := now.Add(180 * 24 * time.Hour)
+
+					hostinfo := tailcfg.Hostinfo{
+						OS:          deviceExitOS[i%len(deviceExitOS)],
+						Hostname:    hostname,
+						RoutableIPs: exitRoutes,
+					}
+
+					node := types.Node{
+						MachineKey:     machineKey.Public(),
+						NodeKey:        nodeKey.Public(),
+						DiscoKey:       discoKey.Public(),
+						Hostname:       hostname,
+						GivenName:      hostname,
+						UserID:         &user.ID,
+						User:           user,
+						RegisterMethod: "debug_seed",
+						Expiry:         &expiry,
+						LastSeen:       &lastSeen,
+						Hostinfo:       &hostinfo,
+						ApprovedRoutes: exitRoutes,
+					}
+
+					ipv4, ipv6, err := h.state.AllocateNextIPs()
+					if err != nil {
+						continue
+					}
+					node.IPv4 = ipv4
+					node.IPv6 = ipv6
+
+					if err := h.state.SaveNodeDirect(&node); err != nil {
+						continue
+					}
+
+					created.DeviceExitNodes = append(created.DeviceExitNodes, hostname)
+				}
+
+				// Create VPN exit nodes — location-based relay servers
+				exitCountries := []struct{ name, code, city, cityCode string }{
+					{"United States", "US", "New York", "nyc"},
+					{"Germany", "DE", "Frankfurt", "fra"},
+					{"Japan", "JP", "Tokyo", "tyo"},
+					{"Australia", "AU", "Sydney", "syd"},
+					{"United Kingdom", "GB", "London", "lon"},
+					{"Netherlands", "NL", "Amsterdam", "ams"},
+					{"Singapore", "SG", "Singapore", "sin"},
+					{"Canada", "CA", "Toronto", "yyz"},
+					{"Brazil", "BR", "São Paulo", "gru"},
+					{"Sweden", "SE", "Stockholm", "arn"},
+				}
+				vpnExitRoutes := []netip.Prefix{tsaddr.AllIPv4(), tsaddr.AllIPv6()}
+				for i := range params.VPNExitNodes {
+					loc := exitCountries[i%len(exitCountries)]
+					user := users[i%len(users)]
+					hostname := fmt.Sprintf("vpn-%s-%d", loc.cityCode, i)
+
+					nodeKey := key.NewNode()
+					machineKey := key.NewMachine()
+					discoKey := key.NewDisco()
+
+					now := time.Now().UTC()
+					lastSeen := now.Add(-time.Duration(i*3) * time.Minute)
+					expiry := now.Add(180 * 24 * time.Hour)
+
+					hostinfo := tailcfg.Hostinfo{
+						OS:          "linux",
+						Hostname:    hostname,
+						RoutableIPs: vpnExitRoutes,
+					}
+
+					node := types.Node{
+						MachineKey:          machineKey.Public(),
+						NodeKey:             nodeKey.Public(),
+						DiscoKey:            discoKey.Public(),
+						Hostname:            hostname,
+						GivenName:           hostname,
+						UserID:              &user.ID,
+						User:                user,
+						RegisterMethod:      "debug_seed",
+						Expiry:              &expiry,
+						LastSeen:            &lastSeen,
+						Hostinfo:            &hostinfo,
+						ApprovedRoutes:      vpnExitRoutes,
+						LocationCountry:     loc.name,
+						LocationCountryCode: loc.code,
+						LocationCity:        loc.city,
+						LocationCityCode:    loc.cityCode,
+					}
+
+					ipv4, ipv6, err := h.state.AllocateNextIPs()
+					if err != nil {
+						continue
+					}
+					node.IPv4 = ipv4
+					node.IPv6 = ipv6
+
+					if err := h.state.SaveNodeDirect(&node); err != nil {
+						continue
+					}
+
+					created.VPNExitNodes = append(created.VPNExitNodes, hostname)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(created) //nolint:errcheck
+			})
+
+			// Purge seeded data only — removes nodes/users created by the seed endpoint
+			dr.Post("/purge-seeded", func(w http.ResponseWriter, req *http.Request) {
+				removed := struct {
+					Nodes int `json:"nodes"`
+					Users int `json:"users"`
+				}{}
+
+				// Delete seeded nodes (RegisterMethod == "debug_seed")
+				allNodes := h.state.ListNodes()
+				for i := range allNodes.Len() {
+					node := allNodes.At(i)
+					if node.RegisterMethod() != "debug_seed" {
+						continue
+					}
+					if _, err := h.state.DeleteNode(node); err != nil {
+						log.Warn().Err(err).Uint64("node_id", node.ID().Uint64()).Msg("failed to purge seeded node")
+						continue
+					}
+					removed.Nodes++
+				}
+
+				// Delete seeded users (Provider == "debug_seed")
+				seededUsers, err := h.state.ListUsersWithFilter(&types.User{Provider: "debug_seed"})
+				if err == nil {
+					for _, user := range seededUsers {
+						if _, err := h.state.DeleteUser(types.UserID(user.ID)); err != nil {
+							log.Warn().Err(err).Str("user", user.Name).Msg("failed to purge seeded user")
+							continue
+						}
+						removed.Users++
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(removed) //nolint:errcheck
+			})
+
+			// Purge all data — removes ALL nodes and users
+			dr.Post("/purge", func(w http.ResponseWriter, req *http.Request) {
+				removed := struct {
+					Nodes int `json:"nodes"`
+					Users int `json:"users"`
+				}{}
+
+				allNodes := h.state.ListNodes()
+				for i := range allNodes.Len() {
+					node := allNodes.At(i)
+					if _, err := h.state.DeleteNode(node); err != nil {
+						log.Warn().Err(err).Uint64("node_id", node.ID().Uint64()).Msg("failed to purge node")
+						continue
+					}
+					removed.Nodes++
+				}
+
+				allUsers, err := h.state.ListAllUsers()
+				if err == nil {
+					for _, user := range allUsers {
+						if _, err := h.state.DeleteUser(types.UserID(user.ID)); err != nil {
+							log.Warn().Err(err).Str("user", user.Name).Msg("failed to purge user")
+							continue
+						}
+						removed.Users++
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(removed) //nolint:errcheck
+			})
 		})
 
 		r.HandleFunc("/v1/*", h.webRoleAuthorizationHandler(grpcMux))

@@ -434,6 +434,21 @@ func (s *State) ListAllUsers() ([]types.User, error) {
 	return s.db.ListUsers()
 }
 
+// AllocateNextIPs allocates the next available IPv4 and IPv6 addresses.
+func (s *State) AllocateNextIPs() (*netip.Addr, *netip.Addr, error) {
+	return s.ipAlloc.Next()
+}
+
+// SaveNodeDirect saves a node struct directly to the database and node store.
+// This is intended for debug/seed operations where a fully-formed Node is provided.
+func (s *State) SaveNodeDirect(node *types.Node) error {
+	if err := s.db.DB.Save(node).Error; err != nil {
+		return fmt.Errorf("saving node to database: %w", err)
+	}
+	s.nodeStore.PutNode(*node)
+	return nil
+}
+
 // persistNodeToDB saves the given node state to the database.
 // This function must receive the exact node state to save to ensure consistency between
 // NodeStore and the database. It verifies the node still exists in NodeStore to prevent

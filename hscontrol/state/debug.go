@@ -291,7 +291,11 @@ func (s *State) DebugOverviewJSON() DebugOverviewInfo {
 
 	for _, node := range allNodes.All() {
 		if node.Valid() {
-			userName := node.Owner().Name()
+			owner := node.Owner()
+			userName := "unknown"
+			if owner.Valid() {
+				userName = owner.Name()
+			}
 			info.Users[userName]++
 
 			if node.IsOnline().Valid() && node.IsOnline().Get() {

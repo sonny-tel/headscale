@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -152,11 +153,12 @@ func (api headscaleV1APIServer) GitHubCallback(
 
 	// No credential linked — find or create the user by GitHub login name,
 	// then link GitHub credentials to them.
-	user, err := api.h.state.DB().GetUserByName(ghUser.Login)
+	ghLogin := strings.ToLower(ghUser.Login)
+	user, err := api.h.state.DB().GetUserByName(ghLogin)
 	if err != nil {
 		// Create the user with "pending" role — they need admin approval.
 		user, err = api.h.state.DB().CreateUser(types.User{
-			Name:          ghUser.Login,
+			Name:          ghLogin,
 			DisplayName:   ghUser.Name,
 			Email:         ghUser.Email,
 			Provider:      "github",
@@ -169,9 +171,9 @@ func (api headscaleV1APIServer) GitHubCallback(
 		}
 
 		log.Info().
-			Str("user", ghUser.Login).
+			Str("user", ghLogin).
 			Str("email", ghUser.Email).
-			Msg("New GitHub user registered — pending admin approval. Run: headscale users approve --name " + ghUser.Login)
+			Msg("New GitHub user registered — pending admin approval. Run: headscale users approve --name " + ghLogin)
 	}
 
 	if !user.CanWebAuth() {

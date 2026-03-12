@@ -12,6 +12,7 @@ import { DNSPage } from "./pages/DNS";
 import { LogsPage } from "./pages/Logs";
 import { ServicesPage } from "./pages/Services";
 import { DocsPage } from "./pages/Docs";
+import { DebugPage } from "./pages/Debug";
 
 const BASE = "/admin";
 
@@ -55,6 +56,8 @@ function Router() {
       return <SettingsPage />;
     case `${BASE}/logs`:
       return <LogsPage />;
+    case `${BASE}/debug`:
+      return <DebugPage />;
     case `${BASE}/docs`:
       return <DocsPage />;
     default:

@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import { useAuth } from "../auth";
 import {
   loginWithPassword,
@@ -10,7 +10,31 @@ import {
   type AuthMethods,
 } from "../api";
 
+const RETURN_TO_COOKIE = "hs_returnTo";
+const RETURN_TO_LS_KEY = "hs_login_returnTo";
+
+/** Detect GitHub callback params synchronously before first render. */
+const INITIAL_HAS_CALLBACK = (() => {
+  const params = new URLSearchParams(window.location.search);
+  return !!(params.get("code") && params.get("state"));
+})();
+
+/** Read returnTo from all available sources (cookie > localStorage > URL). */
 function getReturnTo(): string {
+  // 1. Cookie — most reliable across mobile cross-origin redirects
+  const cookieMatch = document.cookie
+    .split("; ")
+    .find((c) => c.startsWith(RETURN_TO_COOKIE + "="));
+  if (cookieMatch) {
+    const val = decodeURIComponent(cookieMatch.split("=")[1]);
+    if (val.startsWith("/")) return val;
+  }
+  // 2. localStorage — survives tab/context switches
+  try {
+    const stored = localStorage.getItem(RETURN_TO_LS_KEY);
+    if (stored && stored.startsWith("/")) return stored;
+  } catch { /* private browsing may throw */ }
+  // 3. URL query param
   const params = new URLSearchParams(window.location.search);
   const val = params.get("returnTo");
   // Only allow relative paths to prevent open redirect
@@ -18,11 +42,25 @@ function getReturnTo(): string {
   return "/admin/machines";
 }
 
+/** Persist returnTo in cookie + localStorage so it survives the OAuth redirect. */
+function saveReturnTo(returnTo: string) {
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${RETURN_TO_COOKIE}=${encodeURIComponent(returnTo)}; path=/; max-age=600; SameSite=Lax${secure}`;
+  try { localStorage.setItem(RETURN_TO_LS_KEY, returnTo); } catch { /* ignore */ }
+}
+
+/** Clear the persisted returnTo from all storage. */
+function clearReturnTo() {
+  document.cookie = `${RETURN_TO_COOKIE}=; path=/; max-age=0`;
+  try { localStorage.removeItem(RETURN_TO_LS_KEY); } catch { /* ignore */ }
+}
+
 function isRegistrationReturn(returnTo: string): boolean {
   return /^\/admin\/register\//.test(returnTo);
 }
 
 function navigateAfterLogin(returnTo: string) {
+  clearReturnTo();
   window.location.href = returnTo;
 }
 
@@ -40,13 +78,19 @@ export function LoginPage() {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const returnTo = getReturnTo();
+  // Whether we're processing a GitHub OAuth callback return.
+  // Starts true if the URL had code+state on mount.
+  const [processingCallback, setProcessingCallback] = useState(INITIAL_HAS_CALLBACK);
+
+  // Capture returnTo once on mount so it's stable even after URL cleanup.
+  const returnToRef = useRef(getReturnTo());
+  const returnTo = returnToRef.current;
   const isRegistration = isRegistrationReturn(returnTo);
 
-  // If already logged in, redirect immediately
+  // If already logged in AND we're not mid-callback, redirect immediately.
   useEffect(() => {
-    if (user) navigateAfterLogin(returnTo);
-  }, [user, returnTo]);
+    if (user && !processingCallback) navigateAfterLogin(returnTo);
+  }, [user, returnTo, processingCallback]);
 
   useEffect(() => {
     getAuthMethods()
@@ -62,29 +106,37 @@ export function LoginPage() {
       });
   }, []);
 
+  // Handle the GitHub OAuth callback — extract code/state, exchange them,
+  // then navigate to the stored returnTo destination.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
-    if (code && state) {
-      setLoading(true);
-      gitHubCallback(code, state)
-        .then((resp) => {
-          setUser(resp.user);
-          navigateAfterLogin(returnTo);
-        })
-        .catch((err) => {
-          const msg = String(err.message || err);
-          const pendingMatch = msg.match(/pending_approval:(\S+)/);
-          if (pendingMatch) {
-            setPendingUsername(pendingMatch[1]);
-            setPendingApproval(true);
-          } else {
-            setError(msg);
-          }
-        })
-        .finally(() => setLoading(false));
-    }
+    if (!code || !state) return;
+
+    // Strip the OAuth params from the URL so a refresh won't replay them.
+    window.history.replaceState({}, "", "/admin/login");
+
+    setLoading(true);
+    gitHubCallback(code, state)
+      .then((resp) => {
+        setUser(resp.user);
+        setProcessingCallback(false);
+        navigateAfterLogin(returnTo);
+      })
+      .catch((err) => {
+        const msg = String(err.message || err);
+        const pendingMatch = msg.match(/pending_approval:(\S+)/);
+        if (pendingMatch) {
+          setPendingUsername(pendingMatch[1]);
+          setPendingApproval(true);
+          setProcessingCallback(false);
+        } else {
+          // Keep processingCallback true so the interstitial shows the error
+          setError(msg);
+        }
+        setLoading(false);
+      });
   }, [setUser, returnTo]);
 
   // Poll approval status while pending — auto-redirect through GitHub OAuth when approved.
@@ -138,12 +190,65 @@ export function LoginPage() {
     setError("");
     setLoading(true);
     try {
+      // Persist returnTo so it survives the GitHub redirect round-trip.
+      saveReturnTo(returnTo);
       const url = await getGitHubAuthURL();
       window.location.href = url;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
+  }
+
+  // Show a redirect interstitial while processing the GitHub OAuth callback,
+  // so users don't briefly see the sign-in screen again.
+  if (processingCallback) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          padding: "1rem",
+          gap: "1rem",
+        }}
+      >
+        {!error && <span className="spinner" style={{ width: 28, height: 28 }} />}
+        {!error && (
+          <p style={{ fontSize: "0.9375rem", color: "var(--color-text-secondary)" }}>
+            Signing you in…
+          </p>
+        )}
+        {error && (
+          <div style={{ maxWidth: 400, textAlign: "center" }}>
+            <div className="alert error" style={{ textAlign: "left", marginBottom: "1rem" }}>
+              {error}
+            </div>
+            <button
+              onClick={() => {
+                setProcessingCallback(false);
+                setError("");
+                clearReturnTo();
+                window.history.replaceState({}, "", "/admin/login");
+              }}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-lg)",
+                color: "var(--color-text-secondary)",
+                fontSize: "0.8125rem",
+                cursor: "pointer",
+                padding: "0.5rem 1rem",
+              }}
+            >
+              &larr; Back to sign in
+            </button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
