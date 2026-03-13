@@ -1194,19 +1194,19 @@ func (nv NodeView) TailNode(
 	slices.SortFunc(allowedIPs, netip.Prefix.Compare)
 
 	capMap := tailcfg.NodeCapMap{
-		tailcfg.CapabilityAdmin: []tailcfg.RawMessage{},
-		tailcfg.CapabilitySSH:   []tailcfg.RawMessage{},
+		tailcfg.CapabilityAdmin: nil,
+		tailcfg.CapabilitySSH:   nil,
 	}
 	if cfg.RandomizeClientPort {
-		capMap[tailcfg.NodeAttrRandomizeClientPort] = []tailcfg.RawMessage{}
+		capMap[tailcfg.NodeAttrRandomizeClientPort] = nil
 	}
 
 	if cfg.Taildrop.Enabled {
-		capMap[tailcfg.CapabilityFileSharing] = []tailcfg.RawMessage{}
+		capMap[tailcfg.CapabilityFileSharing] = nil
 	}
 
 	// Enable the suggested exit node UI for all nodes.
-	capMap[tailcfg.NodeAttrSuggestExitNodeUI] = []tailcfg.RawMessage{}
+	capMap[tailcfg.NodeAttrSuggestExitNodeUI] = nil
 
 	// Set the tailnet display name so clients show it in the UI.
 	if name := cmp.Or(cfg.TailnetDisplayName, cfg.Domain()); name != "" {
@@ -1217,7 +1217,7 @@ func (nv NodeView) TailNode(
 
 	// Inject policy-driven node attributes into the CapMap.
 	for _, attr := range nodeAttrs {
-		capMap[tailcfg.NodeCapability(attr)] = []tailcfg.RawMessage{}
+		capMap[tailcfg.NodeCapability(attr)] = nil
 	}
 
 	// Inject structured app capabilities (e.g. app-connector config) into the CapMap.

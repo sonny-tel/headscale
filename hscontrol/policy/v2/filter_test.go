@@ -15,6 +15,7 @@ import (
 	"go4.org/netipx"
 	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
+	"tailscale.com/wgengine/filter"
 )
 
 // aliasWithPorts creates an AliasWithPorts structure from an alias and ports.
@@ -3089,6 +3090,54 @@ func TestGroupSourcesByUser(t *testing.T) {
 	}
 }
 
+func TestBuildCapMapDriveSharer(t *testing.T) {
+	t.Run("drive-grant-adds-drive-sharer", func(t *testing.T) {
+		app := map[string][]json.RawMessage{
+			"tailscale.com/cap/drive": {
+				json.RawMessage(`{"shares":["*"]}`),
+			},
+		}
+		capMap := buildCapMap(app)
+
+		require.Contains(t, capMap, tailcfg.PeerCapabilityTaildrive,
+			"should contain the original drive capability")
+		require.Contains(t, capMap, tailcfg.PeerCapabilityTaildriveSharer,
+			"should also contain drive-sharer for peer discovery")
+
+		// Values should match
+		assert.Equal(t, capMap[tailcfg.PeerCapabilityTaildrive], capMap[tailcfg.PeerCapabilityTaildriveSharer])
+	})
+
+	t.Run("explicit-drive-sharer-not-overwritten", func(t *testing.T) {
+		app := map[string][]json.RawMessage{
+			"tailscale.com/cap/drive": {
+				json.RawMessage(`{"shares":["*"]}`),
+			},
+			"tailscale.com/cap/drive-sharer": {
+				json.RawMessage(`{"custom":"value"}`),
+			},
+		}
+		capMap := buildCapMap(app)
+
+		// Explicit drive-sharer should NOT be overwritten
+		require.Len(t, capMap[tailcfg.PeerCapabilityTaildriveSharer], 1)
+		assert.Equal(t, tailcfg.RawMessage(`{"custom":"value"}`), capMap[tailcfg.PeerCapabilityTaildriveSharer][0])
+	})
+
+	t.Run("non-drive-app-unchanged", func(t *testing.T) {
+		app := map[string][]json.RawMessage{
+			"tailscale.com/cap/webui": {
+				json.RawMessage(`{}`),
+			},
+		}
+		capMap := buildCapMap(app)
+
+		require.Contains(t, capMap, tailcfg.PeerCapability("tailscale.com/cap/webui"))
+		assert.NotContains(t, capMap, tailcfg.PeerCapabilityTaildriveSharer,
+			"non-drive apps should not add drive-sharer")
+	})
+}
+
 func TestCompileGrantRules(t *testing.T) {
 	users := types.Users{
 		{Model: gorm.Model{ID: 1}, Name: "user1"},
@@ -3611,5 +3660,231 @@ func TestCompileGrantRulesForNodeWithAutogroupSelf(t *testing.T) {
 		}
 		assert.True(t, hasIP, "should have ip rule")
 		assert.True(t, hasApp, "should have app rule")
+	})
+}
+
+// TestTaildriveEndToEnd verifies the entire Taildrive capability flow from
+// policy parsing through to client-side filter compilation. This tests that:
+// 1. NodeAttrs with drive:share/drive:access reach the self node's CapMap
+// 2. Grants with tailscale.com/cap/drive produce CapGrant rules with drive-sharer
+// 3. The client-side filter.MatchesFromFilterRules preserves CapGrant data
+// 4. CapsWithValues returns drive-sharer for same-user peers
+func TestTaildriveEndToEnd(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "sonny-tel"},
+		{Model: gorm.Model{ID: 2}, Name: "allusivewheat"},
+	}
+
+	nodes := types.Nodes{
+		// sonny-tel nodes
+		{
+			ID:       1,
+			User:     new(users[0]),
+			IPv4:     ap("100.64.0.1"),
+			Hostname: "pixel",
+		},
+		{
+			ID:       2,
+			User:     new(users[0]),
+			IPv4:     ap("100.64.0.8"),
+			Hostname: "euclid",
+		},
+		// allusivewheat nodes
+		{
+			ID:       3,
+			User:     new(users[1]),
+			IPv4:     ap("100.64.0.2"),
+			Hostname: "desktop",
+		},
+		{
+			ID:       4,
+			User:     new(users[1]),
+			IPv4:     ap("100.64.0.3"),
+			Hostname: "fish",
+		},
+	}
+
+	// This is the exact policy a user would configure for Taildrive
+	policyJSON := []byte(`{
+		"acls": [
+			{
+				"action": "accept",
+				"src": ["autogroup:member"],
+				"dst": ["autogroup:member:*"]
+			}
+		],
+		"nodeAttrs": [
+			{
+				"target": ["autogroup:member"],
+				"attr": ["drive:share", "drive:access"]
+			}
+		],
+		"grants": [
+			{
+				"src": ["autogroup:member"],
+				"dst": ["autogroup:self"],
+				"app": {
+					"tailscale.com/cap/drive": [{"shares": ["*"]}]
+				}
+			}
+		]
+	}`)
+
+	pm, err := NewPolicyManager(policyJSON, users, nodes.ViewSlice())
+	require.NoError(t, err, "PolicyManager creation should succeed")
+
+	t.Run("self-node-has-drive-nodeAttrs", func(t *testing.T) {
+		// Every non-tagged node should get drive:share and drive:access
+		for i, node := range nodes {
+			nv := node.View()
+			attrs := pm.NodeAttrsForNode(nv)
+
+			assert.Contains(t, attrs, "drive:share",
+				"node %d (%s) should have drive:share in nodeAttrs", i, node.Hostname)
+			assert.Contains(t, attrs, "drive:access",
+				"node %d (%s) should have drive:access in nodeAttrs", i, node.Hostname)
+		}
+	})
+
+	t.Run("filter-has-capgrant-with-drive-sharer", func(t *testing.T) {
+		// Test for each node
+		for i, node := range nodes {
+			nv := node.View()
+			rules, err := pm.FilterForNode(nv)
+			require.NoError(t, err,
+				"FilterForNode should succeed for node %d (%s)", i, node.Hostname)
+
+			// Find CapGrant rules
+			var capGrantRules []tailcfg.FilterRule
+			for _, rule := range rules {
+				if len(rule.CapGrant) > 0 {
+					capGrantRules = append(capGrantRules, rule)
+				}
+			}
+
+			require.NotEmpty(t, capGrantRules,
+				"node %d (%s) should have CapGrant rules from drive grants", i, node.Hostname)
+
+			// Check that drive and drive-sharer capabilities are present
+			var hasDrive, hasDriveSharer bool
+			for _, rule := range capGrantRules {
+				for _, cg := range rule.CapGrant {
+					for c := range cg.CapMap {
+						if c == tailcfg.PeerCapability("tailscale.com/cap/drive") {
+							hasDrive = true
+						}
+						if c == tailcfg.PeerCapability("tailscale.com/cap/drive-sharer") {
+							hasDriveSharer = true
+						}
+					}
+				}
+			}
+
+			assert.True(t, hasDrive,
+				"node %d (%s) should have tailscale.com/cap/drive in CapGrant", i, node.Hostname)
+			assert.True(t, hasDriveSharer,
+				"node %d (%s) should have tailscale.com/cap/drive-sharer in CapGrant", i, node.Hostname)
+		}
+	})
+
+	t.Run("capgrant-dsts-contain-self-node-ip", func(t *testing.T) {
+		// For euclid (sonny-tel), CapGrant Dsts should contain euclid's own IP
+		// (after ReduceFilterRules), and SrcIPs should only include same-user nodes
+		euclid := nodes[1].View()
+		rules, err := pm.FilterForNode(euclid)
+		require.NoError(t, err)
+
+		for _, rule := range rules {
+			for _, cg := range rule.CapGrant {
+				// Check that user2's IPs are not in SrcIPs
+				for _, srcIP := range rule.SrcIPs {
+					prefix := netip.MustParsePrefix(srcIP)
+					assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.2")),
+						"euclid's CapGrant SrcIPs should NOT include allusivewheat's desktop IP")
+					assert.False(t, prefix.Contains(netip.MustParseAddr("100.64.0.3")),
+						"euclid's CapGrant SrcIPs should NOT include allusivewheat's fish IP")
+				}
+				// SrcIPs should include same-user nodes
+				var hasSrcPixel, hasSrcEuclid bool
+				for _, srcIP := range rule.SrcIPs {
+					prefix := netip.MustParsePrefix(srcIP)
+					if prefix.Contains(netip.MustParseAddr("100.64.0.1")) {
+						hasSrcPixel = true
+					}
+					if prefix.Contains(netip.MustParseAddr("100.64.0.8")) {
+						hasSrcEuclid = true
+					}
+				}
+				assert.True(t, hasSrcPixel, "SrcIPs should include pixel (same user)")
+				assert.True(t, hasSrcEuclid, "SrcIPs should include euclid (same user)")
+
+				// After ReduceFilterRules, Dsts should contain euclid's own IP
+				var hasDstEuclid bool
+				for _, dst := range cg.Dsts {
+					if dst.Contains(netip.MustParseAddr("100.64.0.8")) {
+						hasDstEuclid = true
+					}
+				}
+				assert.True(t, hasDstEuclid, "euclid's CapGrant Dsts should include euclid's IP")
+			}
+		}
+	})
+
+	t.Run("client-filter-compilation-preserves-capgrant", func(t *testing.T) {
+		// Simulate what the Tailscale client does: compile FilterRules into filter.Match
+		euclid := nodes[1].View()
+		rules, err := pm.FilterForNode(euclid)
+		require.NoError(t, err)
+
+		// Compile using the Tailscale client's filter compilation
+		matches, err := filter.MatchesFromFilterRules(rules)
+		require.NoError(t, err, "filter.MatchesFromFilterRules should succeed")
+
+		// Verify that CapMatch entries exist in the compiled matches
+		var hasCapMatch bool
+		for _, m := range matches {
+			if len(m.Caps) > 0 {
+				hasCapMatch = true
+				break
+			}
+		}
+		assert.True(t, hasCapMatch,
+			"compiled filter should have CapMatch entries from CapGrant rules")
+	})
+
+	t.Run("CapsWithValues-returns-drive-sharer-for-same-user-peer", func(t *testing.T) {
+		// This is the critical test: simulates what the Tailscale client does
+		// when checking PeerHasCap(peer, "tailscale.com/cap/drive-sharer")
+
+		euclid := nodes[1].View()
+		rules, err := pm.FilterForNode(euclid)
+		require.NoError(t, err)
+
+		matches, err := filter.MatchesFromFilterRules(rules)
+		require.NoError(t, err)
+
+		// Build a filter (matching what the Tailscale client does)
+		var localBuilder netipx.IPSetBuilder
+		localBuilder.AddPrefix(netip.MustParsePrefix("100.64.0.8/32"))
+		localSet, err := localBuilder.IPSet()
+		require.NoError(t, err)
+
+		filt := filter.New(matches, nil, localSet, localSet, nil, t.Logf)
+
+		// Check: pixel (same user as euclid) should have drive-sharer capability
+		pixelIP := netip.MustParseAddr("100.64.0.1")
+		euclidIP := netip.MustParseAddr("100.64.0.8")
+
+		caps := filt.CapsWithValues(pixelIP, euclidIP)
+		assert.Contains(t, caps, tailcfg.PeerCapability("tailscale.com/cap/drive-sharer"),
+			"pixel (same user) should have drive-sharer capability when checked from euclid")
+		assert.Contains(t, caps, tailcfg.PeerCapability("tailscale.com/cap/drive"),
+			"pixel (same user) should have drive capability when checked from euclid")
+
+		// Check: desktop (different user) should NOT have drive-sharer capability
+		desktopIP := netip.MustParseAddr("100.64.0.2")
+		caps = filt.CapsWithValues(desktopIP, euclidIP)
+		assert.NotContains(t, caps, tailcfg.PeerCapability("tailscale.com/cap/drive-sharer"),
+			"desktop (different user) should NOT have drive-sharer when checked from euclid")
 	})
 }

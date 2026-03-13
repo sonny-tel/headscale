@@ -7,6 +7,7 @@ import (
 
 	"github.com/juanfont/headscale/hscontrol/policy"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/rs/zerolog/log"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/views"
 	"tailscale.com/util/multierr"
@@ -78,6 +79,21 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 	nodeAttrs := b.mapper.state.NodeAttrsForNode(nv)
 	appCaps := b.mapper.state.NodeAppCapsForNode(nv)
 
+	logEvent := log.Debug().
+		Uint64("node.id", uint64(b.nodeID)).
+		Str("node.name", nv.Hostname()).
+		Strs("nodeAttrs", nodeAttrs)
+
+	if appCaps != nil {
+		capNames := make([]string, 0, len(appCaps))
+		for c := range appCaps {
+			capNames = append(capNames, string(c))
+		}
+		logEvent = logEvent.Strs("appCaps", capNames)
+	}
+
+	logEvent.Msg("WithSelfNode: building self node CapMap")
+
 	tailnode, err := nv.TailNode(
 		b.capVer,
 		func(id types.NodeID) []netip.Prefix {
@@ -89,6 +105,17 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 	if err != nil {
 		b.addError(err)
 		return b
+	}
+
+	if tailnode.CapMap != nil {
+		capMapKeys := make([]string, 0, len(tailnode.CapMap))
+		for c := range tailnode.CapMap {
+			capMapKeys = append(capMapKeys, string(c))
+		}
+		log.Debug().
+			Uint64("node.id", uint64(b.nodeID)).
+			Strs("capMap.keys", capMapKeys).
+			Msg("WithSelfNode: final CapMap keys")
 	}
 
 	b.resp.Node = tailnode
@@ -194,6 +221,39 @@ func (b *MapResponseBuilder) WithPacketFilters() *MapResponseBuilder {
 		return b
 	}
 
+	// Log CapGrant rules for debugging drive/grant issues
+	var capGrantCount int
+	for _, rule := range filter {
+		for _, cg := range rule.CapGrant {
+			capGrantCount++
+			capNames := make([]string, 0, len(cg.Caps)+len(cg.CapMap))
+			for _, c := range cg.Caps {
+				capNames = append(capNames, string(c))
+			}
+			for c := range cg.CapMap {
+				capNames = append(capNames, string(c))
+			}
+
+			dstStrs := make([]string, 0, len(cg.Dsts))
+			for _, d := range cg.Dsts {
+				dstStrs = append(dstStrs, d.String())
+			}
+
+			log.Debug().
+				Uint64("node.id", uint64(b.nodeID)).
+				Strs("capGrant.caps", capNames).
+				Strs("capGrant.dsts", dstStrs).
+				Strs("rule.srcIPs", rule.SrcIPs).
+				Msg("WithPacketFilters: CapGrant rule")
+		}
+	}
+
+	log.Debug().
+		Uint64("node.id", uint64(b.nodeID)).
+		Int("filter.rules", len(filter)).
+		Int("filter.capGrantRules", capGrantCount).
+		Msg("WithPacketFilters: filter summary")
+
 	// CapVer 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
 	// Currently, we do not send incremental package filters, however using the
 	// new PacketFilters field and "base" allows us to send a full update when we
@@ -256,16 +316,19 @@ func (b *MapResponseBuilder) buildTailPeers(peers views.Slice[types.NodeView]) (
 		changedViews = peers
 	}
 
-	tailPeers, err := types.TailNodes(
-		changedViews, b.capVer,
-		func(id types.NodeID) []netip.Prefix {
-			return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
-		},
-		b.mapper.cfg,
-		nil,
-		nil)
-	if err != nil {
-		return nil, err
+	routeFunc := func(id types.NodeID) []netip.Prefix {
+		return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
+	}
+
+	tailPeers := make([]*tailcfg.Node, 0, changedViews.Len())
+	for _, peer := range changedViews.All() {
+		peerAttrs := b.mapper.state.NodeAttrsForNode(peer)
+		peerAppCaps := b.mapper.state.NodeAppCapsForNode(peer)
+		tNode, err := peer.TailNode(b.capVer, routeFunc, b.mapper.cfg, peerAttrs, peerAppCaps)
+		if err != nil {
+			return nil, err
+		}
+		tailPeers = append(tailPeers, tNode)
 	}
 
 	// Peers is always returned sorted by Node.ID.

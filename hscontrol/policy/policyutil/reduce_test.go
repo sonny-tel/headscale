@@ -817,3 +817,168 @@ func TestReduceFilterRules(t *testing.T) {
 		}
 	}
 }
+
+func TestReduceFilterRulesCapGrant(t *testing.T) {
+	node := &types.Node{
+		IPv4: ap("100.64.0.1"),
+		IPv6: ap("fd7a:115c:a1e0::1"),
+		User: &types.User{Model: gorm.Model{ID: 1}, Name: "user1"},
+	}
+
+	tests := []struct {
+		name  string
+		rules []tailcfg.FilterRule
+		want  []tailcfg.FilterRule
+	}{
+		{
+			name: "capgrant-matching-node-preserved",
+			rules: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"100.64.0.1/32", "100.64.0.2/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{
+								netip.MustParsePrefix("100.64.0.1/32"),
+								netip.MustParsePrefix("100.64.0.2/32"),
+							},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"],"access":"rw"}`),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"100.64.0.1/32", "100.64.0.2/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{
+								netip.MustParsePrefix("100.64.0.1/32"),
+							},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"],"access":"rw"}`),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capgrant-no-matching-node-dropped",
+			rules: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"100.64.0.1/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{
+								netip.MustParsePrefix("100.64.0.99/32"),
+							},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"]}`),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []tailcfg.FilterRule{},
+		},
+		{
+			name: "capgrant-wildcard-dst-preserved",
+			rules: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"100.64.0.1/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{
+								tsaddr.AllIPv4(),
+								tsaddr.AllIPv6(),
+							},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"]}`),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"100.64.0.1/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{
+								tsaddr.AllIPv4(),
+								tsaddr.AllIPv6(),
+							},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"]}`),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "mixed-dstports-and-capgrant-rules",
+			rules: []tailcfg.FilterRule{
+				{
+					SrcIPs:   []string{"*"},
+					DstPorts: []tailcfg.NetPortRange{{IP: "100.64.0.1/32", Ports: tailcfg.PortRangeAny}},
+				},
+				{
+					SrcIPs: []string{"100.64.0.1/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"]}`),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []tailcfg.FilterRule{
+				{
+					SrcIPs:   []string{"*"},
+					DstPorts: []tailcfg.NetPortRange{{IP: "100.64.0.1/32", Ports: tailcfg.PortRangeAny}},
+				},
+				{
+					SrcIPs: []string{"100.64.0.1/32"},
+					CapGrant: []tailcfg.CapGrant{
+						{
+							Dsts: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+							CapMap: tailcfg.PeerCapMap{
+								"tailscale.com/cap/drive": {
+									tailcfg.RawMessage(`{"shares":["*"]}`),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := policyutil.ReduceFilterRules(node.View(), tt.rules)
+			if diff := cmp.Diff(tt.want, got,
+				cmp.Comparer(func(a, b netip.Prefix) bool { return a == b }),
+			); diff != "" {
+				t.Errorf("ReduceFilterRules() unexpected result (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

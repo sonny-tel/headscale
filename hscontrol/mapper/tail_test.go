@@ -76,10 +76,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
-					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     nil,
+					tailcfg.CapabilityAdmin:           nil,
+					tailcfg.CapabilitySSH:             nil,
+					tailcfg.NodeAttrSuggestExitNodeUI: nil,
 				},
 			},
 			wantErr: false,
@@ -166,10 +166,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
-					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     nil,
+					tailcfg.CapabilityAdmin:           nil,
+					tailcfg.CapabilitySSH:             nil,
+					tailcfg.NodeAttrSuggestExitNodeUI: nil,
 				},
 			},
 			wantErr: false,
@@ -192,10 +192,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
-					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     nil,
+					tailcfg.CapabilityAdmin:           nil,
+					tailcfg.CapabilitySSH:             nil,
+					tailcfg.NodeAttrSuggestExitNodeUI: nil,
 				},
 			},
 			wantErr: false,
@@ -219,10 +219,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
-					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     nil,
+					tailcfg.CapabilityAdmin:           nil,
+					tailcfg.CapabilitySSH:             nil,
+					tailcfg.NodeAttrSuggestExitNodeUI: nil,
 					tailcfg.NodeAttrTailnetDisplayName: []tailcfg.RawMessage{
 						tailcfg.RawMessage(`"My Tailnet"`),
 					},
@@ -247,10 +247,10 @@ func TestTailNode(t *testing.T) {
 				MachineAuthorized: true,
 
 				CapMap: tailcfg.NodeCapMap{
-					tailcfg.CapabilityFileSharing:     []tailcfg.RawMessage{},
-					tailcfg.CapabilityAdmin:           []tailcfg.RawMessage{},
-					tailcfg.CapabilitySSH:             []tailcfg.RawMessage{},
-					tailcfg.NodeAttrSuggestExitNodeUI: []tailcfg.RawMessage{},
+					tailcfg.CapabilityFileSharing:     nil,
+					tailcfg.CapabilityAdmin:           nil,
+					tailcfg.CapabilitySSH:             nil,
+					tailcfg.NodeAttrSuggestExitNodeUI: nil,
 					tailcfg.NodeAttrTailnetDisplayName: []tailcfg.RawMessage{
 						tailcfg.RawMessage(`"hs.example.com"`),
 					},

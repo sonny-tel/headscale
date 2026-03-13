@@ -214,7 +214,7 @@ func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string)
 			ExitNodeDNSResolvers: defaultDNSResolvers(providerName),
 
 			CapMap: tailcfg.NodeCapMap{
-				tailcfg.NodeAttrSuggestExitNode: []tailcfg.RawMessage{},
+				tailcfg.NodeAttrSuggestExitNode: nil,
 			},
 		}
 

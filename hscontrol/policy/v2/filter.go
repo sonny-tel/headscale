@@ -947,6 +947,17 @@ func buildCapMap(app map[string][]stdjson.RawMessage) tailcfg.PeerCapMap {
 		}
 	}
 
+	// When a "tailscale.com/cap/drive" grant is present, also add
+	// "tailscale.com/cap/drive-sharer". The Tailscale client uses
+	// PeerCapabilityTaildriveSharer to discover which peers are sharing
+	// files via Taildrive (checked by PeerHasCap in drive.go), while
+	// PeerCapabilityTaildrive is used for access authorization.
+	if driveVals, ok := capMap[tailcfg.PeerCapabilityTaildrive]; ok {
+		if _, exists := capMap[tailcfg.PeerCapabilityTaildriveSharer]; !exists {
+			capMap[tailcfg.PeerCapabilityTaildriveSharer] = driveVals
+		}
+	}
+
 	return capMap
 }
 
