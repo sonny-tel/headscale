@@ -9,6 +9,7 @@ import {
 import { useAuth } from "../auth";
 import { getPermissions } from "../permissions";
 import ConfirmModal from "../ConfirmModal";
+import { UnsavedFooter } from "../UnsavedFooter";
 
 const ROLE_OPTIONS: { value: string; label: string; description: string }[] = [
   { value: "admin", label: "Admin", description: "Full access to all settings" },
@@ -241,14 +242,6 @@ export function UsersPage() {
     }
   }
 
-  function undoRole(id: string) {
-    setPendingRoles((p) => {
-      const next = { ...p };
-      delete next[id];
-      return next;
-    });
-  }
-
   const pendingChanges = Object.keys(pendingRoles).length;
 
   const isAdmin = currentUser?.role === "admin";
@@ -293,32 +286,6 @@ export function UsersPage() {
       {error && (
         <div className="alert error" style={{ marginBottom: "1rem" }}>
           {error}
-        </div>
-      )}
-
-      {pendingChanges > 0 && (
-        <div className="unsaved-banner flex items-center justify-between">
-          <span>
-            {pendingChanges} unsaved role change{pendingChanges !== 1 ? "s" : ""}
-          </span>
-          <div className="flex gap-2">
-            <button
-              className="outline sm"
-              onClick={() => setPendingRoles({})}
-            >
-              Discard all
-            </button>
-            <button
-              className="sm"
-              onClick={async () => {
-                for (const [id, role] of Object.entries(pendingRoles)) {
-                  await handleRoleChange(id, role);
-                }
-              }}
-            >
-              Apply all
-            </button>
-          </div>
         </div>
       )}
 
@@ -405,7 +372,6 @@ export function UsersPage() {
                     <td>
                       {(() => {
                         const staged = pendingRoles[user.id];
-                        const hasChange = staged !== undefined;
                         const canEdit = isAdmin && user.id !== currentUser?.id;
                         const isSaving = saving[user.id];
 
@@ -430,28 +396,6 @@ export function UsersPage() {
                               onChange={(role) => stageRole(user.id, user.role, role)}
                               disabled={isSaving}
                             />
-                            {hasChange && (
-                              <>
-                                <button
-                                  className="sm"
-                                  disabled={isSaving}
-                                  onClick={() => handleRoleChange(user.id, staged)}
-                                  title="Apply"
-                                  style={{ padding: "0.15rem 0.4rem", fontSize: "0.7rem" }}
-                                >
-                                  {isSaving ? "…" : "✓"}
-                                </button>
-                                <button
-                                  className="outline sm"
-                                  disabled={isSaving}
-                                  onClick={() => undoRole(user.id)}
-                                  title="Undo"
-                                  style={{ padding: "0.15rem 0.4rem", fontSize: "0.7rem" }}
-                                >
-                                  ✕
-                                </button>
-                              </>
-                            )}
                           </div>
                         );
                       })()}
@@ -505,6 +449,18 @@ export function UsersPage() {
         destructive
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <UnsavedFooter
+        visible={pendingChanges > 0}
+        message={`${pendingChanges} unsaved role change${pendingChanges !== 1 ? "s" : ""}`}
+        onDiscard={() => setPendingRoles({})}
+        onSave={async () => {
+          for (const [id, role] of Object.entries(pendingRoles)) {
+            await handleRoleChange(id, role);
+          }
+        }}
+        saveLabel="Apply all"
       />
     </div>
   );

@@ -5,6 +5,7 @@ import "prismjs/components/prism-json";
 import { getPolicy, setPolicy, getServerInfo } from "../api";
 import { useAuth } from "../auth";
 import { getPermissions } from "../permissions";
+import { UnsavedFooter } from "../UnsavedFooter";
 
 export function ACLPage() {
   const { user } = useAuth();
@@ -125,36 +126,11 @@ export function ACLPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {canEdit && hasChanges && (
-            <button className="ghost sm" onClick={handleReset}>
-              Discard
-            </button>
-          )}
-          {canEdit && (
-            <button
-              onClick={handleSave}
-              disabled={saving || !hasChanges}
-              style={{
-                padding: "0.375rem 1rem",
-                background: hasChanges ? "var(--color-primary)" : "var(--color-surface-2)",
-                color: hasChanges ? "#fff" : "var(--color-text-tertiary)",
-                border: "none",
-                borderRadius: "var(--radius)",
-                fontSize: "0.8125rem",
-                fontWeight: 500,
-                cursor: hasChanges ? "pointer" : "default",
-              }}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          )}
-          {!canEdit && (
-            <span className="text-sm text-tertiary">
-              {isFileMode ? "File-based policy (read-only)" : "Read-only"}
-            </span>
-          )}
-        </div>
+        {!canEdit && (
+          <span className="text-sm text-tertiary">
+            {isFileMode ? "File-based policy (read-only)" : "Read-only"}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -211,6 +187,14 @@ export function ACLPage() {
           textareaClassName="policy-editor-textarea"
         />
       </div>
+
+      <UnsavedFooter
+        visible={canEdit && hasChanges}
+        onDiscard={handleReset}
+        onSave={handleSave}
+        saving={saving}
+        saveLabel="Save policy"
+      />
     </div>
   );
 }

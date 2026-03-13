@@ -7,6 +7,7 @@ import {
 } from "../api";
 import { useAuth } from "../auth";
 import { getPermissions } from "../permissions";
+import { UnsavedFooter } from "../UnsavedFooter";
 
 /* ------------------------------------------------------------------ */
 /*  Icons                                                              */
@@ -455,7 +456,7 @@ export function DNSPage() {
   const usedProviders = new Set(nsGroups.map(g => g.provider?.name).filter(Boolean));
 
   return (
-    <div style={{ paddingBottom: isDirty ? "4rem" : undefined }}>
+    <div>
       {/* Header */}
       <div style={{ marginBottom: "2rem" }}>
         <div className="flex items-center justify-between">
@@ -715,27 +716,13 @@ export function DNSPage() {
       </div>
 
       {/* ── Sticky Undo / Apply bar ── */}
-      {isDirty && perms.canWriteDNS && (
-        <div style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          padding: "0.75rem 1.5rem",
-          background: "var(--color-surface)",
-          borderTop: "1px solid var(--color-border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: "0.5rem",
-          zIndex: 100,
-          boxShadow: "0 -2px 12px rgba(0,0,0,0.3)",
-        }}>
-          <span className="text-sm text-secondary" style={{ marginRight: "auto" }}>You have unsaved changes</span>
-          <button className="btn outline sm" onClick={handleUndo} disabled={saving}>Undo</button>
-          <button className="btn primary sm" onClick={handleApply} disabled={saving}>{saving ? "Applying\u2026" : "Apply changes"}</button>
-        </div>
-      )}
+      <UnsavedFooter
+        visible={isDirty && perms.canWriteDNS}
+        onDiscard={handleUndo}
+        onSave={handleApply}
+        saving={saving}
+        saveLabel="Apply changes"
+      />
 
       {/* ── Modals ── */}
       <AddNameserverModal open={nsModalOpen} onClose={() => setNsModalOpen(false)} onAdd={(ip, splitDomain) => {
