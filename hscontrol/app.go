@@ -1398,6 +1398,117 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 			json.NewEncoder(w).Encode(resp) //nolint:errcheck
 		})
 
+		// Advertised services CRUD endpoints.
+		r.Get("/v1/web/services/advertised", func(w http.ResponseWriter, req *http.Request) {
+			var nodeID uint64
+			if nid := req.URL.Query().Get("node_id"); nid != "" {
+				if v, err := strconv.ParseUint(nid, 10, 64); err == nil {
+					nodeID = v
+				}
+			}
+			services, err := h.state.DB().ListAdvertisedServices(nodeID)
+			if err != nil {
+				http.Error(w, "Failed to list services", http.StatusInternalServerError)
+				return
+			}
+			// Enrich with node names.
+			nodes := h.state.ListNodes()
+			nodeNames := make(map[uint64]string)
+			for _, nv := range nodes.All() {
+				nodeNames[uint64(nv.ID())] = nv.GivenName()
+			}
+			type enriched struct {
+				types.AdvertisedService
+				MachineName string `json:"machine_name"`
+			}
+			result := make([]enriched, 0, len(services))
+			for _, svc := range services {
+				result = append(result, enriched{
+					AdvertisedService: svc,
+					MachineName:       nodeNames[svc.NodeID],
+				})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"services": result}) //nolint:errcheck
+		})
+
+		r.Post("/v1/web/services/advertised", func(w http.ResponseWriter, req *http.Request) {
+			var payload struct {
+				NodeID uint64 `json:"node_id"`
+				Name   string `json:"name"`
+				Proto  string `json:"proto"`
+				Port   uint16 `json:"port"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+			if payload.Name == "" || payload.Port == 0 || payload.NodeID == 0 {
+				http.Error(w, "name, port, and node_id are required", http.StatusBadRequest)
+				return
+			}
+			if payload.Proto == "" {
+				payload.Proto = "tcp"
+			}
+			svc := &types.AdvertisedService{
+				NodeID: payload.NodeID,
+				Name:   payload.Name,
+				Proto:  payload.Proto,
+				Port:   payload.Port,
+			}
+			if err := h.state.DB().CreateAdvertisedService(svc); err != nil {
+				http.Error(w, "Failed to create service", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(svc) //nolint:errcheck
+		})
+
+		r.Put("/v1/web/services/advertised/{id}", func(w http.ResponseWriter, req *http.Request) {
+			idStr := chi.URLParam(req, "id")
+			id, err := strconv.ParseUint(idStr, 10, 64)
+			if err != nil {
+				http.Error(w, "invalid id", http.StatusBadRequest)
+				return
+			}
+			var payload struct {
+				Name  string `json:"name"`
+				Proto string `json:"proto"`
+				Port  uint16 `json:"port"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+			svc := &types.AdvertisedService{
+				ID:    id,
+				Name:  payload.Name,
+				Proto: payload.Proto,
+				Port:  payload.Port,
+			}
+			if err := h.state.DB().UpdateAdvertisedService(svc); err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(svc) //nolint:errcheck
+		})
+
+		r.Delete("/v1/web/services/advertised/{id}", func(w http.ResponseWriter, req *http.Request) {
+			idStr := chi.URLParam(req, "id")
+			id, err := strconv.ParseUint(idStr, 10, 64)
+			if err != nil {
+				http.Error(w, "invalid id", http.StatusBadRequest)
+				return
+			}
+			if err := h.state.DB().DeleteAdvertisedService(id); err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+
 		// Documentation tree endpoint — returns the list of markdown files.
 		r.Get("/v1/web/docs/tree", func(w http.ResponseWriter, req *http.Request) {
 			var entries []docEntry

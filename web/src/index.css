@@ -185,6 +185,23 @@ input:focus, select:focus, textarea:focus {
 }
 input::placeholder { color: var(--color-text-tertiary); }
 
+.port-stepper {
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.port-stepper:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 1.75rem;
+}
+
 label {
   display: block;
   font-size: 0.8125rem;

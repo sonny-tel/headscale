@@ -187,6 +187,7 @@ func (m *mapper) selfMapResponse(
 		WithDebugType(selfResponseDebug).
 		WithCapabilityVersion(capVer).
 		WithSelfNode().
+		WithCollectServices().
 		Build()
 	if err != nil {
 		return nil, err
@@ -285,6 +286,10 @@ func (m *mapper) buildFromChange(
 	if resp.IncludeDomain {
 		builder.WithDomain()
 	}
+
+	// Always include CollectServices so newly-connected nodes know
+	// whether to scan and report listening ports.
+	builder.WithCollectServices()
 
 	if resp.IncludePolicy {
 		builder.WithPacketFilters()

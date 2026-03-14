@@ -1,5 +1,16 @@
-import { useState, useEffect, useMemo } from "react";
-import { getDiscoveredServices, type DiscoveredEndpoint, type DiscoveredServicesResponse } from "../api";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  getDiscoveredServices,
+  getAdvertisedServices,
+  createAdvertisedService,
+  updateAdvertisedService,
+  deleteAdvertisedService,
+  listNodes,
+  type DiscoveredEndpoint,
+  type DiscoveredServicesResponse,
+  type AdvertisedService,
+  type Node,
+} from "../api";
 import { useAuth } from "../auth";
 import { getPermissions } from "../permissions";
 
@@ -234,15 +245,329 @@ function DiscoveredTab() {
   );
 }
 
-// ─── Advertised Tab (Placeholder) ─────────────────────────────────────────────
+// ─── Advertised Tab ───────────────────────────────────────────────────────────
 
 function AdvertisedTab() {
+  const { user } = useAuth();
+  const perms = getPermissions(user?.role);
+  const [services, setServices] = useState<AdvertisedService[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  // Form state
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [formNodeId, setFormNodeId] = useState<number>(0);
+  const [formName, setFormName] = useState("");
+  const [formProto, setFormProto] = useState("tcp");
+  const [formPort, setFormPort] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    Promise.all([getAdvertisedServices(), listNodes()])
+      .then(([svcs, ns]) => {
+        setServices(svcs);
+        setNodes(ns);
+        setError("");
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  function resetForm() {
+    setShowForm(false);
+    setEditId(null);
+    setFormNodeId(0);
+    setFormName("");
+    setFormProto("tcp");
+    setFormPort("");
+  }
+
+  function startEdit(svc: AdvertisedService) {
+    setEditId(svc.id);
+    setFormNodeId(svc.node_id);
+    setFormName(svc.name);
+    setFormProto(svc.proto);
+    setFormPort(String(svc.port));
+    setShowForm(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const port = parseInt(formPort, 10);
+    if (!formName || !port || port < 1 || port > 65535) return;
+    setSaving(true);
+    try {
+      if (editId !== null) {
+        await updateAdvertisedService(editId, { name: formName, proto: formProto, port });
+      } else {
+        if (!formNodeId) return;
+        await createAdvertisedService({ node_id: formNodeId, name: formName, proto: formProto, port });
+      }
+      resetForm();
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Delete this advertised service?")) return;
+    try {
+      await deleteAdvertisedService(id);
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (loading && services.length === 0) {
+    return <div style={{ padding: "2rem", textAlign: "center" }}><span className="spinner" /></div>;
+  }
+
+  if (error) {
+    return <p style={{ color: "var(--color-danger)" }}>Failed to load advertised services: {error}</p>;
+  }
+
+  const inputStyle: React.CSSProperties = {
+    padding: "0.5rem 0.75rem",
+    fontSize: "0.8125rem",
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius)",
+    background: "var(--color-surface)",
+    color: "var(--color-text)",
+  };
+
   return (
-    <div style={{ padding: "3rem 2rem", textAlign: "center" }}>
-      <p style={{ fontSize: "1rem", fontWeight: 500, marginBottom: "0.5rem" }}>Advertised services</p>
-      <p className="text-sm text-secondary" style={{ maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
-        Tailscale Services (VIPs) allow you to advertise named services with virtual IPs. This feature is not yet available in headscale.
-      </p>
+    <div>
+      {/* Add button */}
+      {perms.canWriteServices && !showForm && (
+        <div style={{ marginBottom: "1rem" }}>
+          <button
+            onClick={() => { resetForm(); setShowForm(true); }}
+            className="btn btn-primary"
+            style={{ fontSize: "0.8125rem" }}
+          >
+            + Add Service
+          </button>
+        </div>
+      )}
+
+      {/* Inline form */}
+      {showForm && (
+        <form
+          onSubmit={handleSubmit}
+          className="card"
+          style={{ padding: "1rem", marginBottom: "1rem" }}
+        >
+          <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
+            {editId === null && (
+              <select
+                value={formNodeId}
+                onChange={(e) => setFormNodeId(Number(e.target.value))}
+                required
+                style={{ ...inputStyle, minWidth: 160 }}
+              >
+                <option value={0} disabled>Select machine...</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>{n.given_name || n.name}</option>
+                ))}
+              </select>
+            )}
+            <input
+              placeholder="Service name"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              required
+              style={{ ...inputStyle, flex: "1 1 140px", minWidth: 120 }}
+            />
+            <select
+              value={formProto}
+              onChange={(e) => setFormProto(e.target.value)}
+              style={{ ...inputStyle, width: 80 }}
+            >
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+            <div className="port-stepper" style={{
+              display: "inline-flex",
+              alignItems: "stretch",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius)",
+              background: "var(--color-surface)",
+              overflow: "hidden",
+              width: 110,
+            }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="Port"
+                value={formPort}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/\D/g, "");
+                  if (v === "" || (Number(v) >= 0 && Number(v) <= 65535)) setFormPort(v);
+                }}
+                required
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: "0.5rem 0.5rem",
+                  fontSize: "0.8125rem",
+                  background: "transparent",
+                  color: "var(--color-text)",
+                  border: "none",
+                  outline: "none",
+                }}
+              />
+              <div style={{
+                display: "flex",
+                flexDirection: "column",
+                borderLeft: "1px solid var(--color-border)",
+              }}>
+                <button type="button" tabIndex={-1} onClick={() => {
+                  const n = Math.min(65535, (parseInt(formPort, 10) || 0) + 1);
+                  setFormPort(String(n));
+                }} style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  padding: 0,
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: "1px solid var(--color-border)",
+                  color: "var(--color-text-secondary)",
+                  cursor: "pointer",
+                  fontSize: "0.5rem",
+                  lineHeight: 1,
+                }}>▲</button>
+                <button type="button" tabIndex={-1} onClick={() => {
+                  const n = Math.max(1, (parseInt(formPort, 10) || 0) - 1);
+                  setFormPort(String(n));
+                }} style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  padding: 0,
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--color-text-secondary)",
+                  cursor: "pointer",
+                  fontSize: "0.5rem",
+                  lineHeight: 1,
+                }}>▼</button>
+              </div>
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={saving}
+              style={{ fontSize: "0.8125rem" }}
+            >
+              {saving ? "Saving..." : editId !== null ? "Update" : "Create"}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              style={{
+                fontSize: "0.8125rem",
+                padding: "0.5rem 0.75rem",
+                background: "transparent",
+                color: "var(--color-text-secondary)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius)",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Table */}
+      {services.length === 0 ? (
+        <div style={{ padding: "3rem 2rem", textAlign: "center" }}>
+          <p style={{ fontSize: "1rem", fontWeight: 500, marginBottom: "0.5rem" }}>No advertised services</p>
+          <p className="text-sm text-secondary" style={{ maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+            Manually register services running on your nodes. Click "Add Service" above to get started.
+          </p>
+        </div>
+      ) : (
+        <div className="card" style={{ overflow: "auto" }}>
+          <table style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Protocol</th>
+                <th>Port</th>
+                <th>Machine</th>
+                {perms.canWriteServices && <th style={{ width: 120 }}></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {services.map((svc) => (
+                <tr key={svc.id}>
+                  <td>
+                    <span style={{ fontWeight: 500, fontSize: "0.875rem" }}>{svc.name}</span>
+                  </td>
+                  <td>
+                    <span className="badge" style={{ fontSize: "0.6875rem", background: "var(--color-surface)", color: "var(--color-text-tertiary)", border: "1px solid var(--color-border)" }}>
+                      {svc.proto.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="text-sm">{svc.port}</td>
+                  <td className="text-sm">{svc.machine_name || `Node ${svc.node_id}`}</td>
+                  {perms.canWriteServices && (
+                    <td style={{ textAlign: "right" }}>
+                      <div className="flex items-center gap-1" style={{ justifyContent: "flex-end" }}>
+                        <button
+                          onClick={() => startEdit(svc)}
+                          style={{
+                            padding: "0.25rem 0.5rem",
+                            fontSize: "0.75rem",
+                            color: "var(--color-primary)",
+                            background: "transparent",
+                            border: "1px solid var(--color-primary)",
+                            borderRadius: "var(--radius)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(svc.id)}
+                          style={{
+                            padding: "0.25rem 0.5rem",
+                            fontSize: "0.75rem",
+                            color: "var(--color-danger, #e53e3e)",
+                            background: "transparent",
+                            border: "1px solid var(--color-danger, #e53e3e)",
+                            borderRadius: "var(--radius)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

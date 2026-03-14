@@ -1001,6 +1001,24 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				ID: "202603131100-add-advertised-services",
+				Migrate: func(tx *gorm.DB) error {
+					return tx.Exec(`CREATE TABLE IF NOT EXISTS advertised_services (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						node_id bigint NOT NULL,
+						name text NOT NULL,
+						proto text NOT NULL DEFAULT 'tcp',
+						port integer NOT NULL,
+						created_at datetime,
+						updated_at datetime,
+						CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+					)`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS advertised_services`).Error
+				},
+			},
 		},
 	)
 
@@ -1101,6 +1119,20 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			return err
 		}
 		if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type)`).Error; err != nil {
+			return err
+		}
+
+		// Create advertised_services table.
+		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS advertised_services (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			node_id bigint NOT NULL,
+			name text NOT NULL,
+			proto text NOT NULL DEFAULT 'tcp',
+			port integer NOT NULL,
+			created_at datetime,
+			updated_at datetime,
+			CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+		)`).Error; err != nil {
 			return err
 		}
 

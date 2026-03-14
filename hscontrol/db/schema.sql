@@ -197,3 +197,14 @@ CREATE TABLE audit_events(
 );
 CREATE INDEX idx_audit_events_timestamp ON audit_events(timestamp);
 CREATE INDEX idx_audit_events_event_type ON audit_events(event_type);
+
+CREATE TABLE advertised_services(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  node_id bigint NOT NULL,
+  name text NOT NULL,
+  proto text NOT NULL DEFAULT 'tcp',
+  port integer NOT NULL,
+  created_at datetime,
+  updated_at datetime,
+  CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);

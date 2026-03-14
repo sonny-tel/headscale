@@ -694,6 +694,75 @@ export async function getDiscoveredServices(): Promise<DiscoveredServicesRespons
   return res.json();
 }
 
+// --- Advertised Services ---
+
+export interface AdvertisedService {
+  id: number;
+  node_id: number;
+  name: string;
+  proto: string;
+  port: number;
+  created_at: string;
+  updated_at: string;
+  machine_name: string;
+}
+
+export interface AdvertisedServicesResponse {
+  services: AdvertisedService[];
+}
+
+export async function getAdvertisedServices(
+  nodeId?: number
+): Promise<AdvertisedService[]> {
+  const params = nodeId ? `?node_id=${nodeId}` : "";
+  const res = await fetch(`${API_BASE}/web/services/advertised${params}`, {
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  const data: AdvertisedServicesResponse = await res.json();
+  return data.services ?? [];
+}
+
+export async function createAdvertisedService(svc: {
+  node_id: number;
+  name: string;
+  proto: string;
+  port: number;
+}): Promise<AdvertisedService> {
+  const res = await fetch(`${API_BASE}/web/services/advertised`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(svc),
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function updateAdvertisedService(
+  id: number,
+  svc: { name: string; proto: string; port: number }
+): Promise<AdvertisedService> {
+  const res = await fetch(`${API_BASE}/web/services/advertised/${id}`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(svc),
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function deleteAdvertisedService(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/web/services/advertised/${id}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+}
+
 export interface DocEntry {
   path: string;
   title: string;
