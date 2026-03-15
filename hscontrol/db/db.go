@@ -1019,6 +1019,59 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 					return db.Exec(`DROP TABLE IF EXISTS advertised_services`).Error
 				},
 			},
+			{
+				ID: "202603141200-add-device-attributes",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS device_attributes (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						node_id bigint NOT NULL,
+						attr_key text NOT NULL,
+						attr_value text NOT NULL,
+						updated_at datetime,
+						CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+					)`).Error; err != nil {
+						return err
+					}
+					return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_attr_node_key ON device_attributes(node_id, attr_key)`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS device_attributes`).Error
+				},
+			},
+			{
+				ID: "202603141201-add-network-flow-logs",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS network_flow_logs (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						node_id bigint NOT NULL,
+						action text NOT NULL,
+						details text DEFAULT '',
+						client_timestamp datetime NOT NULL,
+						received_at datetime NOT NULL
+					)`).Error; err != nil {
+						return err
+					}
+					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_logs_node_id ON network_flow_logs(node_id)`).Error; err != nil {
+						return err
+					}
+					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_logs_action ON network_flow_logs(action)`).Error; err != nil {
+						return err
+					}
+					return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_logs_received_at ON network_flow_logs(received_at)`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS network_flow_logs`).Error
+				},
+			},
+			{
+				ID: "202603141500-drop-network-flow-logs",
+				Migrate: func(tx *gorm.DB) error {
+					return tx.Exec(`DROP TABLE IF EXISTS network_flow_logs`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return nil
+				},
+			},
 		},
 	)
 
@@ -1133,6 +1186,21 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			updated_at datetime,
 			CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
 		)`).Error; err != nil {
+			return err
+		}
+
+		// Create device_attributes table.
+		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS device_attributes (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			node_id bigint NOT NULL,
+			attr_key text NOT NULL,
+			attr_value text NOT NULL,
+			updated_at datetime,
+			CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+		)`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_attr_node_key ON device_attributes(node_id, attr_key)`).Error; err != nil {
 			return err
 		}
 

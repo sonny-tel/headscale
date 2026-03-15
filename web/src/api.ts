@@ -45,6 +45,20 @@ export interface Node {
   os?: string;
   os_version?: string;
   fqdn?: string;
+  distro?: string;
+  distro_version?: string;
+  distro_code_name?: string;
+  device_model?: string;
+  arch?: string;
+  go_version?: string;
+  container?: boolean;
+  desktop?: boolean;
+  state_encrypted?: boolean;
+  shields_up?: boolean;
+  ssh_enabled?: boolean;
+  tpm?: TPMInfo;
+  package?: string;
+  cloud?: string;
 }
 
 export interface PreAuthKey {
@@ -316,17 +330,31 @@ export async function uploadAvatar(file: File): Promise<User> {
 export async function listNodes(): Promise<Node[]> {
   const [nodeResp, extraResp] = await Promise.all([
     request<{ nodes: Node[] }>("/node"),
-    request<{ nodes: { id: number; client_version?: string; os?: string; os_version?: string; fqdn?: string }[] }>("/web/nodes").catch(() => ({ nodes: [] })),
+    request<{ nodes: Record<string, unknown>[] }>("/web/nodes").catch(() => ({ nodes: [] })),
   ]);
   const nodes = nodeResp.nodes ?? [];
   const extraMap = new Map(extraResp.nodes.map((e) => [String(e.id), e]));
   for (const n of nodes) {
     const extra = extraMap.get(n.id);
     if (extra) {
-      n.client_version = extra.client_version;
-      n.os = extra.os;
-      n.os_version = extra.os_version;
-      n.fqdn = extra.fqdn;
+      n.client_version = extra.client_version as string | undefined;
+      n.os = extra.os as string | undefined;
+      n.os_version = extra.os_version as string | undefined;
+      n.fqdn = extra.fqdn as string | undefined;
+      n.distro = extra.distro as string | undefined;
+      n.distro_version = extra.distro_version as string | undefined;
+      n.distro_code_name = extra.distro_code_name as string | undefined;
+      n.device_model = extra.device_model as string | undefined;
+      n.arch = extra.arch as string | undefined;
+      n.go_version = extra.go_version as string | undefined;
+      n.container = extra.container as boolean | undefined;
+      n.desktop = extra.desktop as boolean | undefined;
+      n.state_encrypted = extra.state_encrypted as boolean | undefined;
+      n.shields_up = extra.shields_up as boolean | undefined;
+      n.ssh_enabled = extra.ssh_enabled as boolean | undefined;
+      n.tpm = extra.tpm as TPMInfo | undefined;
+      n.package = extra.package as string | undefined;
+      n.cloud = extra.cloud as string | undefined;
     }
   }
   return nodes;
@@ -761,6 +789,50 @@ export async function deleteAdvertisedService(id: number): Promise<void> {
     headers: { "Content-Type": "application/json" },
   });
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+}
+
+// --- Device Posture ---
+
+export interface TPMInfo {
+  manufacturer?: string;
+  vendor?: string;
+  family_indicator?: string;
+}
+
+export interface DevicePosture {
+  node_id: number;
+  machine_name: string;
+  os: string;
+  os_version: string;
+  client_version: string;
+  distro: string;
+  distro_version: string;
+  distro_code_name: string;
+  device_model: string;
+  hostname: string;
+  arch: string;
+  go_version: string;
+  container?: boolean;
+  desktop?: boolean;
+  userspace?: boolean;
+  state_encrypted?: boolean;
+  shields_up: boolean;
+  ssh_enabled: boolean;
+  tpm?: TPMInfo;
+  package: string;
+  cloud: string;
+  online: boolean;
+  last_seen: string;
+}
+
+export async function getDevicePosture(): Promise<DevicePosture[]> {
+  const res = await fetch(`${API_BASE}/web/device-posture`, {
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  const data = await res.json();
+  return data.devices ?? [];
 }
 
 export interface DocEntry {

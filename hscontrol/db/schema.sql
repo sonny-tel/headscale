@@ -208,3 +208,13 @@ CREATE TABLE advertised_services(
   updated_at datetime,
   CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
+
+CREATE TABLE device_attributes(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  node_id bigint NOT NULL,
+  attr_key text NOT NULL,
+  attr_value text NOT NULL,
+  updated_at datetime,
+  CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX idx_device_attr_node_key ON device_attributes(node_id, attr_key);

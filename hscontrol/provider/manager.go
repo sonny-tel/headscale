@@ -17,10 +17,10 @@ type Manager struct {
 }
 
 // NewManager creates a provider Manager with an empty relay cache.
-func NewManager(baseDomain string) *Manager {
+func NewManager(baseDomain string, spoofProviderDomains bool) *Manager {
 	return &Manager{
 		providers: make(map[string]Provider),
-		cache:     NewRelayCache(baseDomain),
+		cache:     NewRelayCache(baseDomain, spoofProviderDomains),
 	}
 }
 

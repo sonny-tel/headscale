@@ -309,8 +309,8 @@ function NodeRow({
               </div>
             )}
 
-            {/* Machine Details + Addresses — two column layout */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+            {/* Machine Details + Addresses + Posture — three column layout */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem" }}>
               {/* Left: Machine Details */}
               <div className="detail-section">
                 <h4 className="detail-section-title">Machine Details</h4>
@@ -325,13 +325,10 @@ function NodeRow({
                   <DetailRow label="Last seen" value={node.last_seen ? `${timeAgo(node.last_seen)} — ${new Date(node.last_seen).toLocaleString()}` : "—"} />
                   <DetailRow label="Key expiry" value={node.expiry && new Date(node.expiry).getFullYear() > 1 ? new Date(node.expiry).toLocaleString() : "No expiry"} />
                   <DetailRow label="Register method" value={formatRegisterMethod(node.register_method)} />
-                  <DetailRow label="Tailscale version" value={node.client_version || "—"} />
-                  <DetailRow label="OS" value={node.os ? `${formatOS(node.os)}${node.os_version ? " " + node.os_version : ""}` : "—"} />
-                  {node.is_wireguard_only && <DetailRow label="WireGuard only" value="Yes" />}
                 </div>
               </div>
 
-              {/* Right: Addresses */}
+              {/* Middle: Addresses */}
               <div className="detail-section">
                 <h4 className="detail-section-title">Addresses</h4>
                 <div className="detail-grid">
@@ -370,6 +367,60 @@ function NodeRow({
                     </span>
                   </>
                 )}
+              </div>
+
+              {/* Right: Device Posture */}
+              <div className="detail-section">
+                <h4 className="detail-section-title">Device Posture</h4>
+                <div className="detail-grid">
+                  <DetailRow label="OS" value={node.os ? `${formatOS(node.os)}${node.os_version ? " " + node.os_version : ""}` : "—"} />
+                  {node.distro && <DetailRow label="Distribution" value={[node.distro, node.distro_version, node.distro_code_name ? `(${node.distro_code_name})` : ""].filter(Boolean).join(" ")} />}
+                  {node.device_model && <DetailRow label="Device model" value={node.device_model} />}
+                  {node.arch && <DetailRow label="Architecture" value={node.arch} />}
+                  <DetailRow label="Tailscale version" value={node.client_version || "—"} />
+                  {node.package && <DetailRow label="Package" value={node.package} />}
+                  {node.go_version && <DetailRow label="Go version" value={node.go_version} />}
+                  {node.cloud && <DetailRow label="Cloud" value={node.cloud} />}
+                </div>
+                <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+                  {node.state_encrypted !== undefined && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: node.state_encrypted ? "color-mix(in srgb, var(--color-success) 15%, transparent)" : "color-mix(in srgb, var(--color-text-tertiary) 15%, transparent)",
+                      color: node.state_encrypted ? "var(--color-success)" : "var(--color-text-tertiary)",
+                    }}>{node.state_encrypted ? "Encrypted" : "Unencrypted"}</span>
+                  )}
+                  {node.shields_up && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)",
+                    }}>Shields Up</span>
+                  )}
+                  {node.ssh_enabled && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", color: "var(--color-primary)",
+                    }}>SSH</span>
+                  )}
+                  {node.container && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", color: "var(--color-primary)",
+                    }}>Container</span>
+                  )}
+                  {node.tpm && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: "color-mix(in srgb, var(--color-success) 15%, transparent)", color: "var(--color-success)",
+                    }} title={[node.tpm.vendor || node.tpm.manufacturer, node.tpm.family_indicator].filter(Boolean).join(" — ")}>TPM</span>
+                  )}
+                  {node.is_wireguard_only && (
+                    <span style={{
+                      padding: "0.125rem 0.5rem", borderRadius: "9999px", fontSize: "0.6875rem", fontWeight: 500,
+                      background: "color-mix(in srgb, var(--color-text-tertiary) 15%, transparent)", color: "var(--color-text-tertiary)",
+                    }}>WireGuard only</span>
+                  )}
+                </div>
               </div>
             </div>
           </td>

@@ -406,7 +406,7 @@ func (h *Headscale) initProviderManager() error {
 		return nil
 	}
 
-	mgr := provider.NewManager(h.cfg.BaseDomain)
+	mgr := provider.NewManager(h.cfg.BaseDomain, h.cfg.SpoofProviderDomains)
 
 	// Determine unique provider names from accounts.
 	seen := make(map[string]bool)
@@ -1297,12 +1297,31 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 			nodes := h.state.ListNodes()
 			baseDomain := h.cfg.BaseDomain
 
+			type tpmInfo struct {
+				Manufacturer    string `json:"manufacturer,omitempty"`
+				Vendor          string `json:"vendor,omitempty"`
+				FamilyIndicator string `json:"family_indicator,omitempty"`
+			}
 			type enrichedNode struct {
-				ID            uint64 `json:"id,omitempty"`
-				ClientVersion string `json:"client_version,omitempty"`
-				OS            string `json:"os,omitempty"`
-				OSVersion     string `json:"os_version,omitempty"`
-				FQDN          string `json:"fqdn,omitempty"`
+				ID             uint64   `json:"id,omitempty"`
+				ClientVersion  string   `json:"client_version,omitempty"`
+				OS             string   `json:"os,omitempty"`
+				OSVersion      string   `json:"os_version,omitempty"`
+				FQDN           string   `json:"fqdn,omitempty"`
+				Distro         string   `json:"distro,omitempty"`
+				DistroVersion  string   `json:"distro_version,omitempty"`
+				DistroCodeName string   `json:"distro_code_name,omitempty"`
+				DeviceModel    string   `json:"device_model,omitempty"`
+				Arch           string   `json:"arch,omitempty"`
+				GoVersion      string   `json:"go_version,omitempty"`
+				Container      *bool    `json:"container,omitempty"`
+				Desktop        *bool    `json:"desktop,omitempty"`
+				StateEncrypted *bool    `json:"state_encrypted,omitempty"`
+				ShieldsUp      bool     `json:"shields_up"`
+				SSH            bool     `json:"ssh_enabled"`
+				TPM            *tpmInfo `json:"tpm,omitempty"`
+				Package        string   `json:"package,omitempty"`
+				Cloud          string   `json:"cloud,omitempty"`
 			}
 
 			result := make([]enrichedNode, 0, nodes.Len())
@@ -1314,6 +1333,32 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 					en.ClientVersion = hi.IPNVersion()
 					en.OS = hi.OS()
 					en.OSVersion = hi.OSVersion()
+					en.Distro = hi.Distro()
+					en.DistroVersion = hi.DistroVersion()
+					en.DistroCodeName = hi.DistroCodeName()
+					en.DeviceModel = hi.DeviceModel()
+					en.Arch = hi.Machine()
+					en.GoVersion = hi.GoVersion()
+					en.Package = hi.Package()
+					en.Cloud = hi.Cloud()
+					en.ShieldsUp = hi.ShieldsUp()
+					en.SSH = hi.TailscaleSSHEnabled()
+					if c, ok := hi.Container().Get(); ok {
+						en.Container = &c
+					}
+					if d, ok := hi.Desktop().Get(); ok {
+						en.Desktop = &d
+					}
+					if se, ok := hi.StateEncrypted().Get(); ok {
+						en.StateEncrypted = &se
+					}
+					if t, ok := hi.TPM().GetOk(); ok {
+						en.TPM = &tpmInfo{
+							Manufacturer:    t.Manufacturer,
+							Vendor:          t.Vendor,
+							FamilyIndicator: t.FamilyIndicator,
+						}
+					}
 				}
 				if fqdn, err := nv.GetFQDN(baseDomain); err == nil {
 					en.FQDN = fqdn
@@ -1507,6 +1552,94 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+		})
+
+		// Device posture endpoint — returns Hostinfo-based posture data for all nodes.
+		r.Get("/v1/web/device-posture", func(w http.ResponseWriter, req *http.Request) {
+			nodes := h.state.ListNodes()
+
+			type tpmInfo struct {
+				Manufacturer    string `json:"manufacturer,omitempty"`
+				Vendor          string `json:"vendor,omitempty"`
+				FamilyIndicator string `json:"family_indicator,omitempty"`
+			}
+			type devicePosture struct {
+				NodeID         uint64   `json:"node_id"`
+				MachineName    string   `json:"machine_name"`
+				OS             string   `json:"os,omitempty"`
+				OSVersion      string   `json:"os_version,omitempty"`
+				ClientVersion  string   `json:"client_version,omitempty"`
+				Distro         string   `json:"distro,omitempty"`
+				DistroVersion  string   `json:"distro_version,omitempty"`
+				DistroCodeName string   `json:"distro_code_name,omitempty"`
+				DeviceModel    string   `json:"device_model,omitempty"`
+				Hostname       string   `json:"hostname,omitempty"`
+				Arch           string   `json:"arch,omitempty"`
+				GoVersion      string   `json:"go_version,omitempty"`
+				Container      *bool    `json:"container,omitempty"`
+				Desktop        *bool    `json:"desktop,omitempty"`
+				Userspace      *bool    `json:"userspace,omitempty"`
+				StateEncrypted *bool    `json:"state_encrypted,omitempty"`
+				ShieldsUp      bool     `json:"shields_up"`
+				SSH            bool     `json:"ssh_enabled"`
+				TPM            *tpmInfo `json:"tpm,omitempty"`
+				Package        string   `json:"package,omitempty"`
+				Cloud          string   `json:"cloud,omitempty"`
+				Online         bool     `json:"online"`
+				LastSeen       string   `json:"last_seen,omitempty"`
+			}
+
+			result := make([]devicePosture, 0, nodes.Len())
+			for _, nv := range nodes.All() {
+				dp := devicePosture{
+					NodeID:      uint64(nv.ID()),
+					MachineName: nv.GivenName(),
+				}
+				if online, ok := nv.IsOnline().GetOk(); ok {
+					dp.Online = online
+				}
+				if ls, ok := nv.LastSeen().GetOk(); ok {
+					dp.LastSeen = ls.UTC().Format(time.RFC3339)
+				}
+				if hi := nv.Hostinfo(); hi.Valid() {
+					dp.OS = hi.OS()
+					dp.OSVersion = hi.OSVersion()
+					dp.ClientVersion = hi.IPNVersion()
+					dp.Distro = hi.Distro()
+					dp.DistroVersion = hi.DistroVersion()
+					dp.DistroCodeName = hi.DistroCodeName()
+					dp.DeviceModel = hi.DeviceModel()
+					dp.Hostname = hi.Hostname()
+					dp.Arch = hi.Machine()
+					dp.GoVersion = hi.GoVersion()
+					dp.Package = hi.Package()
+					dp.Cloud = hi.Cloud()
+					dp.ShieldsUp = hi.ShieldsUp()
+					dp.SSH = hi.TailscaleSSHEnabled()
+					if c, ok := hi.Container().Get(); ok {
+						dp.Container = &c
+					}
+					if d, ok := hi.Desktop().Get(); ok {
+						dp.Desktop = &d
+					}
+					if u, ok := hi.Userspace().Get(); ok {
+						dp.Userspace = &u
+					}
+					if se, ok := hi.StateEncrypted().Get(); ok {
+						dp.StateEncrypted = &se
+					}
+					if t, ok := hi.TPM().GetOk(); ok {
+						dp.TPM = &tpmInfo{
+							Manufacturer:    t.Manufacturer,
+							Vendor:          t.Vendor,
+							FamilyIndicator: t.FamilyIndicator,
+						}
+					}
+				}
+				result = append(result, dp)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"devices": result}) //nolint:errcheck
 		})
 
 		// Documentation tree endpoint — returns the list of markdown files.

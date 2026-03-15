@@ -250,7 +250,7 @@ func (api headscaleV1APIServer) ListProviderAllocations(
 func (h *Headscale) ensureProviderManager(ctx context.Context, providerName string) error {
 	mgr := h.state.ProviderManager()
 	if mgr == nil {
-		mgr = provider.NewManager(h.cfg.BaseDomain)
+		mgr = provider.NewManager(h.cfg.BaseDomain, h.cfg.SpoofProviderDomains)
 		h.state.SetProviderManager(mgr)
 	}
 

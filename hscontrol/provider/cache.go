@@ -15,20 +15,22 @@ import (
 // RelayCache holds relay servers in memory, synthesized from provider APIs.
 // Relays are never persisted to disk — the cache is rebuilt on startup.
 type RelayCache struct {
-	mu            sync.RWMutex
-	baseDomain    string                     // headscale base domain for node names
-	relays        map[string][]Relay         // provider name → relay list
-	lastSync      map[string]time.Time       // provider name → last sync time
-	tailNodeCache map[string][]*tailcfg.Node // provider name → synthetic nodes (memoized)
+	mu                   sync.RWMutex
+	baseDomain           string                     // headscale base domain for node names
+	spoofProviderDomains bool                       // use <provider>.ts.net instead of <provider>.<baseDomain>
+	relays               map[string][]Relay         // provider name → relay list
+	lastSync             map[string]time.Time       // provider name → last sync time
+	tailNodeCache        map[string][]*tailcfg.Node // provider name → synthetic nodes (memoized)
 }
 
 // NewRelayCache creates an empty relay cache.
-func NewRelayCache(baseDomain string) *RelayCache {
+func NewRelayCache(baseDomain string, spoofProviderDomains bool) *RelayCache {
 	return &RelayCache{
-		baseDomain:    baseDomain,
-		relays:        make(map[string][]Relay),
-		lastSync:      make(map[string]time.Time),
-		tailNodeCache: make(map[string][]*tailcfg.Node),
+		baseDomain:           baseDomain,
+		spoofProviderDomains: spoofProviderDomains,
+		relays:               make(map[string][]Relay),
+		lastSync:             make(map[string]time.Time),
+		tailNodeCache:        make(map[string][]*tailcfg.Node),
 	}
 }
 
@@ -81,7 +83,7 @@ func (rc *RelayCache) AllTailNodes() []*tailcfg.Node {
 	for providerName, relays := range rc.relays {
 		nodes, ok := rc.tailNodeCache[providerName]
 		if !ok {
-			nodes = buildSyntheticNodes(providerName, relays, rc.baseDomain)
+			nodes = buildSyntheticNodes(providerName, relays, rc.baseDomain, rc.spoofProviderDomains)
 			rc.tailNodeCache[providerName] = nodes
 		}
 
@@ -146,7 +148,7 @@ func syntheticTailscaleIPv6(nodeID tailcfg.NodeID) netip.Addr {
 	return netip.AddrFrom16(addr)
 }
 
-func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string) []*tailcfg.Node {
+func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string, spoofDomain bool) []*tailcfg.Node {
 	nodes := make([]*tailcfg.Node, 0, len(relays))
 
 	for _, r := range relays {
@@ -192,7 +194,7 @@ func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string)
 		tNode := &tailcfg.Node{
 			ID:       nodeID,
 			StableID: stableID,
-			Name:     r.Hostname + "." + providerName + "." + baseDomain,
+			Name:     providerNodeName(r.Hostname, providerName, baseDomain, spoofDomain),
 			User:     tailcfg.UserID(2147455555), // TaggedDevices
 
 			Key:       r.WGPubKey,
@@ -222,6 +224,17 @@ func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string)
 	}
 
 	return nodes
+}
+
+// providerNodeName returns the FQDN for a provider relay node.
+// When spoofDomain is enabled, it uses "<hostname>.<provider>.ts.net."
+// to match the official Tailscale format, enabling native VPN picker support.
+// Otherwise it uses "<hostname>.<provider>.<baseDomain>.".
+func providerNodeName(hostname, providerName, baseDomain string, spoofDomain bool) string {
+	if spoofDomain {
+		return hostname + "." + providerName + ".ts.net."
+	}
+	return hostname + "." + providerName + "." + baseDomain + "."
 }
 
 // defaultDNSResolvers returns the default exit-node DNS resolvers for a provider.

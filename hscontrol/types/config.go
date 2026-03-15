@@ -111,7 +111,8 @@ type Config struct {
 
 	WebUI WebUIConfig
 
-	CollectServices bool
+	CollectServices      bool
+	SpoofProviderDomains bool
 }
 
 type DNSConfig struct {
@@ -1286,7 +1287,8 @@ func LoadServerConfig() (*Config, error) {
 
 		WebUI: webUIConfig(),
 
-		CollectServices: viper.GetBool("collect_services"),
+		CollectServices:      viper.GetBool("collect_services"),
+		SpoofProviderDomains: viper.GetBool("spoof_provider_domains"),
 	}, nil
 }
 

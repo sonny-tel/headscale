@@ -144,13 +144,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		r.Post("/set-dns", ns.NotImplementedHandler)
 
 		// A patch of [tailcfg.SetDeviceAttributesRequest] to update device attributes.
-		// We currently do not support device attributes.
-		r.Patch("/set-device-attr", ns.NotImplementedHandler)
-
-		// A [tailcfg.AuditLogRequest] to send audit log entries to the server.
-		// The server is expected to store them "somewhere".
-		// We currently do not support device attributes.
-		r.Post("/audit-log", ns.NotImplementedHandler)
+		r.Patch("/set-device-attr", ns.SetDeviceAttributesHandler)
 
 		// handles requests to get an OIDC ID token. Receives a [tailcfg.TokenRequest].
 		r.Post("/id-token", ns.NotImplementedHandler)
@@ -254,6 +248,48 @@ func (ns *noiseServer) NotImplementedHandler(writer http.ResponseWriter, req *ht
 	d, _ := io.ReadAll(req.Body)
 	log.Trace().Caller().Str("path", req.URL.String()).Bytes("body", d).Msgf("not implemented handler hit")
 	http.Error(writer, "Not implemented yet", http.StatusNotImplemented)
+}
+
+// SetDeviceAttributesHandler handles PATCH /machine/set-device-attr.
+// Clients send a [tailcfg.SetDeviceAttributesRequest] to update device posture attributes.
+func (ns *noiseServer) SetDeviceAttributesHandler(writer http.ResponseWriter, req *http.Request) {
+	body, _ := io.ReadAll(req.Body)
+
+	var attrReq tailcfg.SetDeviceAttributesRequest
+	if err := json.Unmarshal(body, &attrReq); err != nil {
+		http.Error(writer, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	nv, ok := ns.headscale.state.GetNodeByNodeKey(attrReq.NodeKey)
+	if !ok {
+		http.Error(writer, "node not found", http.StatusNotFound)
+		return
+	}
+
+	if ns.machineKey != nv.MachineKey() {
+		http.Error(writer, "machine key mismatch", http.StatusForbidden)
+		return
+	}
+
+	if err := ns.headscale.state.DB().SetDeviceAttributes(
+		uint64(nv.ID()),
+		map[string]any(attrReq.Update),
+	); err != nil {
+		log.Error().Err(err).
+			Uint64("node.id", uint64(nv.ID())).
+			Msg("failed to set device attributes")
+		http.Error(writer, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	log.Info().
+		Uint64("node.id", uint64(nv.ID())).
+		Str("node.name", nv.Hostname()).
+		Int("attrs_count", len(attrReq.Update)).
+		Msg("device attributes updated")
+
+	writer.WriteHeader(http.StatusOK)
 }
 
 func urlParam[T any](req *http.Request, key string) (T, error) {
