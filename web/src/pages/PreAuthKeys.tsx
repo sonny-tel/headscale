@@ -28,7 +28,7 @@ export function PreAuthKeysPage() {
       const data = await listUsers();
       setUsers(data);
       if (data.length > 0 && !selectedUser) {
-        setSelectedUser(data[0].name);
+        setSelectedUser(data[0].id);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -39,8 +39,8 @@ export function PreAuthKeysPage() {
     if (!selectedUser) return;
     try {
       setLoading(true);
-      const data = await listPreAuthKeys(selectedUser);
-      setKeys(data);
+      const data = await listPreAuthKeys();
+      setKeys(data.filter((k) => k.user?.id === selectedUser));
       setError("");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -91,7 +91,11 @@ export function PreAuthKeysPage() {
   async function confirmExpire() {
     if (!expireTarget) return;
     try {
-      await expirePreAuthKey({ user: selectedUser, key: expireTarget });
+      // Find the key object to get its numeric ID
+      const keyObj = keys.find((k) => k.key === expireTarget);
+      if (keyObj) {
+        await expirePreAuthKey(keyObj.id);
+      }
       await fetchKeys();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -123,7 +127,7 @@ export function PreAuthKeysPage() {
             style={{ padding: "0.375rem 0.5rem", fontSize: "0.8125rem" }}
           >
             {users.map((u) => (
-              <option key={u.id} value={u.name}>{u.name}</option>
+              <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </select>
           <button className="outline" onClick={fetchKeys}>Refresh</button>

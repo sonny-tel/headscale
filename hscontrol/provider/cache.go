@@ -227,12 +227,13 @@ func buildSyntheticNodes(providerName string, relays []Relay, baseDomain string,
 }
 
 // providerNodeName returns the FQDN for a provider relay node.
-// When spoofDomain is enabled, it uses "<hostname>.<provider>.ts.net."
-// to match the official Tailscale format, enabling native VPN picker support.
+// When spoofDomain is enabled, it always uses "<hostname>.mullvad.ts.net."
+// regardless of the actual provider, because Tailscale clients only
+// recognise "mullvad.ts.net" for the native VPN picker UI.
 // Otherwise it uses "<hostname>.<provider>.<baseDomain>.".
 func providerNodeName(hostname, providerName, baseDomain string, spoofDomain bool) string {
 	if spoofDomain {
-		return hostname + "." + providerName + ".ts.net."
+		return hostname + ".mullvad.ts.net."
 	}
 	return hostname + "." + providerName + "." + baseDomain + "."
 }

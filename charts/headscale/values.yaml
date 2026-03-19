@@ -1,0 +1,175 @@
+# Default values for headscale Helm chart.
+
+replicaCount: 1
+
+image:
+  repository: headscale/headscale
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext:
+  fsGroup: 65534
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  readOnlyRootFilesystem: true
+
+# ─── Headscale Configuration ──────────────────────────────────────────────────
+# These values are rendered into the ConfigMap that becomes config.yaml.
+# See config-example.yaml for full documentation.
+config:
+  serverUrl: "https://headscale.example.com"
+  listenAddr: "0.0.0.0:8080"
+  metricsListenAddr: "0.0.0.0:9090"
+  grpcListenAddr: "0.0.0.0:50443"
+  grpcAllowInsecure: false
+
+  tailnetDisplayName: "My Tailnet"
+
+  noise:
+    privateKeyPath: /var/lib/headscale/noise_private.key
+
+  prefixes:
+    v4: "100.64.0.0/10"
+    v6: "fd7a:115c:a1e0::/48"
+    allocation: sequential
+
+  derp:
+    server:
+      enabled: false
+      regionId: 999
+      regionCode: headscale
+      regionName: "Headscale Embedded DERP"
+      stunListenAddr: "0.0.0.0:3478"
+      privateKeyPath: /var/lib/headscale/derp_server_private.key
+      automaticallyAddEmbeddedDerpRegion: true
+    urls:
+      - https://controlplane.tailscale.com/derpmap/default
+    paths: []
+    autoUpdateEnabled: true
+    updateFrequency: "3h"
+
+  ephemeralNodeInactivityTimeout: "30m"
+
+  # Database: "sqlite" or "postgres"
+  database:
+    type: sqlite
+    debug: false
+    sqlite:
+      path: /var/lib/headscale/db.sqlite
+      writeAheadLog: true
+    # postgres:
+    #   host: postgres
+    #   port: 5432
+    #   name: headscale
+    #   user: headscale
+    #   pass: ""
+    #   ssl: false
+    #   maxOpenConns: 10
+    #   maxIdleConns: 10
+    #   connMaxIdleTimeSecs: 3600
+
+  dns:
+    magicDns: true
+    baseDomain: example.com
+    overrideLocalDns: true
+    nameservers:
+      global:
+        - 1.1.1.1
+        - 1.0.0.1
+
+  policy:
+    mode: file
+    path: ""
+
+  log:
+    level: info
+    format: text
+
+  logtail:
+    enabled: false
+
+  randomizeClientPort: false
+
+  # Web UI — set enabled: true and ensure the image includes /var/lib/headscale/web-ui
+  webUi:
+    enabled: false
+    staticPath: /var/lib/headscale/web-ui
+    basePath: /admin
+
+  # OIDC — uncomment and configure for SSO
+  # oidc:
+  #   issuer: "https://your-oidc-provider.example.com"
+  #   clientId: ""
+  #   clientSecret: ""
+  #   expiry: "180d"
+
+# ─── Service ──────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090
+  grpcPort: 50443
+
+  # For DERP embedded server STUN
+  stun:
+    enabled: false
+    port: 3478
+
+# ─── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  hosts:
+    - host: headscale.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: headscale-tls
+  #    hosts:
+  #      - headscale.example.com
+
+# ─── Persistence ──────────────────────────────────────────────────────────────
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+# ─── Resources ────────────────────────────────────────────────────────────────
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ─── Optional PostgreSQL sub-chart ────────────────────────────────────────────
+# To use the Bitnami PostgreSQL chart, add it as a dependency.
+postgresql:
+  enabled: false
+  # auth:
+  #   username: headscale
+  #   password: changeme
+  #   database: headscale

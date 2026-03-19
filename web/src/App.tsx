@@ -4,6 +4,7 @@ import { RouterProvider, useRouter } from "./router";
 import { ThemeProvider } from "./theme";
 import { LoginPage } from "./pages/Login";
 import { NodesPage } from "./pages/Nodes";
+import { MyDevicesPage } from "./pages/MyDevices";
 import { UsersPage } from "./pages/Users";
 import { SettingsPage } from "./pages/Settings";
 import { RegisterPage } from "./pages/Register";
@@ -42,6 +43,17 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function Router() {
   const { path } = useRouter();
+  const { user } = useAuth();
+
+  // Members see a simplified "My Devices" view
+  if (user?.role === "member") {
+    switch (path) {
+      case `${BASE}/docs`:
+        return <DocsPage />;
+      default:
+        return <MyDevicesPage />;
+    }
+  }
 
   switch (path) {
     case `${BASE}/users`:

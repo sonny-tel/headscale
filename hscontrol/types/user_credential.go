@@ -4,9 +4,8 @@ import "time"
 
 // UserCredential stores local authentication data for a User.
 // This is an optional 1:0..1 relationship — users who authenticate
-// only via OIDC or who are service accounts will not have a credential
-// record. Only users with a credential can perform password-based
-// web authentication.
+// only via OIDC will not have a credential record. Only users with
+// a credential can perform password-based web authentication.
 type UserCredential struct {
 	UserID uint64 `gorm:"primaryKey"`
 	User   User   `gorm:"constraint:OnDelete:CASCADE;"`
@@ -23,12 +22,16 @@ type UserCredential struct {
 	FailedLoginAttempts int `gorm:"not null;default:0"`
 	LockedUntil         *time.Time
 
+	// Password rotation fields.
+	PasswordChangedAt  *time.Time `gorm:"column:password_changed_at"`
+	MustChangePassword bool       `gorm:"not null;default:false"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 // UserSession represents an authenticated web UI session.
-// Only non-service-account users with valid credentials or OIDC
+// Only non-pending users with valid credentials or OIDC
 // provider linkage can hold sessions.
 type UserSession struct {
 	ID        string    `gorm:"primaryKey"` // crypto/rand token.

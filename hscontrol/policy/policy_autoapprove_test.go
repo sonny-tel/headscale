@@ -340,3 +340,144 @@ func TestApproveRoutesWithPolicy_NilAndEmptyCases(t *testing.T) {
 		}
 	}
 }
+
+func TestApproveRoutesWithPolicy_AppConnectorAutoApproval(t *testing.T) {
+	user1 := types.User{
+		Model: gorm.Model{ID: 1},
+		Name:  "testuser@",
+	}
+	user2 := types.User{
+		Model: gorm.Model{ID: 2},
+		Name:  "otheruser@",
+	}
+	users := []types.User{user1, user2}
+
+	// App connector node — targeted by nodeAttrs rule
+	appConnNode := &types.Node{
+		ID:             1,
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "app-connector",
+		UserID:         new(user1.ID),
+		User:           new(user1),
+		RegisterMethod: util.RegisterMethodAuthKey,
+		IPv4:           new(netip.MustParseAddr("100.64.0.1")),
+		Tags:           []string{"tag:connector"},
+	}
+
+	// Regular node — NOT an app connector
+	regularNode := &types.Node{
+		ID:             2,
+		MachineKey:     key.NewMachine().Public(),
+		NodeKey:        key.NewNode().Public(),
+		Hostname:       "regular-node",
+		UserID:         new(user2.ID),
+		User:           new(user2),
+		RegisterMethod: util.RegisterMethodAuthKey,
+		IPv4:           new(netip.MustParseAddr("100.64.0.2")),
+	}
+
+	// Policy with nodeAttrs granting app-connectors capability to tag:connector nodes
+	policyJSON := `{
+		"tagOwners": {
+			"tag:connector": ["testuser@"]
+		},
+		"acls": [
+			{"action": "accept", "src": ["*"], "dst": ["*:*"]}
+		],
+		"nodeAttrs": [
+			{
+				"target": ["tag:connector"],
+				"app": {
+					"tailscale.com/app-connectors": [{"domains": ["example.com", "*.example.com"]}]
+				}
+			}
+		]
+	}`
+
+	pm, err := policyv2.NewPolicyManager(
+		[]byte(policyJSON),
+		users,
+		views.SliceOf([]types.NodeView{appConnNode.View(), regularNode.View()}),
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name            string
+		node            *types.Node
+		currentApproved []netip.Prefix
+		announcedRoutes []netip.Prefix
+		wantApproved    []netip.Prefix
+		wantChanged     bool
+		description     string
+	}{
+		{
+			name:            "app_connector_auto_approves_all_routes",
+			node:            appConnNode,
+			currentApproved: []netip.Prefix{},
+			announcedRoutes: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"), // resolved IP for example.com
+				netip.MustParsePrefix("93.184.216.35/32"), // another resolved IP
+			},
+			wantApproved: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"),
+				netip.MustParsePrefix("93.184.216.35/32"),
+			},
+			wantChanged: true,
+			description: "App connector nodes should have all announced routes auto-approved",
+		},
+		{
+			name:            "regular_node_not_auto_approved_without_autoApprovers",
+			node:            regularNode,
+			currentApproved: []netip.Prefix{},
+			announcedRoutes: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"),
+			},
+			wantApproved: []netip.Prefix{},
+			wantChanged:  false,
+			description:  "Regular nodes without autoApprovers should NOT get routes auto-approved",
+		},
+		{
+			name: "app_connector_keeps_existing_approved",
+			node: appConnNode,
+			currentApproved: []netip.Prefix{
+				netip.MustParsePrefix("10.0.0.0/24"), // previously approved
+			},
+			announcedRoutes: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"), // new dynamic route
+			},
+			wantApproved: []netip.Prefix{
+				netip.MustParsePrefix("10.0.0.0/24"),
+				netip.MustParsePrefix("93.184.216.34/32"),
+			},
+			wantChanged: true,
+			description: "App connector should keep previously approved routes and add new ones",
+		},
+		{
+			name: "app_connector_no_new_routes",
+			node: appConnNode,
+			currentApproved: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"),
+			},
+			announcedRoutes: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"), // same route
+			},
+			wantApproved: []netip.Prefix{
+				netip.MustParsePrefix("93.184.216.34/32"),
+			},
+			wantChanged: false,
+			description: "No change when app connector re-announces already approved routes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotApproved, gotChanged := ApproveRoutesWithPolicy(pm, tt.node.View(), tt.currentApproved, tt.announcedRoutes)
+
+			assert.Equal(t, tt.wantChanged, gotChanged, "changed flag mismatch: %s", tt.description)
+
+			slices.SortFunc(tt.wantApproved, netip.Prefix.Compare)
+			assert.Equal(t, tt.wantApproved, gotApproved, "approved routes mismatch: %s", tt.description)
+		})
+	}
+}

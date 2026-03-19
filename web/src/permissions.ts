@@ -83,6 +83,25 @@ const IT_ADMIN: Permissions = {
   canViewDebug: false,
 };
 
+const MEMBER: Permissions = {
+  canAccessAdmin: true,
+  canViewMachines: true, // own machines only
+  canWriteMachines: false,
+  canViewUsers: false,
+  canWriteUsers: false,
+  canViewACL: false,
+  canWriteACL: false,
+  canViewDNS: false,
+  canWriteDNS: false,
+  canManageAuthKeys: false,
+  canManageAPIKeys: false,
+  canViewLogs: false,
+  canViewSettings: false,
+  canViewServices: false,
+  canWriteServices: false,
+  canViewDebug: false,
+};
+
 const NO_ACCESS: Permissions = {
   canAccessAdmin: false,
   canViewMachines: false,
@@ -110,6 +129,8 @@ export function getPermissions(role: string | undefined): Permissions {
       return NETWORK_ADMIN;
     case "it_admin":
       return IT_ADMIN;
+    case "member":
+      return MEMBER;
     default:
       return NO_ACCESS;
   }

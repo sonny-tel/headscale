@@ -30,7 +30,7 @@ var capVerMinimumTailscaleVersionTests = []struct {
 	input    tailcfg.CapabilityVersion
 	expected string
 }{
-	{106, "v1.74"},
+	{85, "v1.58"},
 	{32, "v1.24"},
 	{41, "v1.30"},
 	{46, "v1.32"},

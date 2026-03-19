@@ -3,11 +3,15 @@ import { useAuth } from "../auth";
 import {
   loginWithPassword,
   verifyOTP,
+  setupOTP,
+  confirmOTP,
+  changePassword,
   getGitHubAuthURL,
   gitHubCallback,
   getAuthMethods,
   checkApprovalStatus,
   type AuthMethods,
+  type OTPSetupResponse,
 } from "../api";
 
 const RETURN_TO_COOKIE = "hs_returnTo";
@@ -72,11 +76,19 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [needsOTP, setNeedsOTP] = useState(false);
+  const [needsOTPSetup, setNeedsOTPSetup] = useState(false);
+  const [otpSetupData, setOtpSetupData] = useState<OTPSetupResponse | null>(null);
+  const [otpSetupCode, setOtpSetupCode] = useState("");
+  const [otpSetupUser, setOtpSetupUser] = useState<import("../api").User | null>(null);
   const [error, setError] = useState("");
   const [pendingApproval, setPendingApproval] = useState(false);
   const [pendingUsername, setPendingUsername] = useState("");
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [needsPasswordChange, setNeedsPasswordChange] = useState(false);
+  const [passwordChangeUser, setPasswordChangeUser] = useState<import("../api").User | null>(null);
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
 
   // Whether we're processing a GitHub OAuth callback return.
   // Starts true if the URL had code+state on mount.
@@ -173,12 +185,63 @@ export function LoginPage() {
         return;
       }
       const resp = await loginWithPassword(username, password);
-      if (resp.otp_required) {
+      if (resp.password_change_required && resp.session_token) {
+        // Must change password before proceeding.
+        setPasswordChangeUser(resp.user);
+        setNeedsPasswordChange(true);
+      } else if (resp.otp_required && resp.session_token) {
+        // Mandatory OTP: user has a session but must set up OTP first
+        setOtpSetupUser(resp.user);
+        const setup = await setupOTP();
+        setOtpSetupData(setup);
+        setNeedsOTPSetup(true);
+      } else if (resp.otp_required) {
         setNeedsOTP(true);
       } else {
         setUser(resp.user);
         navigateAfterLogin(returnTo);
       }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleOTPSetupVerify(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const resp = await confirmOTP(otpSetupCode);
+      setUser(resp.user ?? otpSetupUser);
+      navigateAfterLogin(returnTo);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordChange(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (newPw !== confirmPw) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (newPw.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    setLoading(true);
+    try {
+      await changePassword(password, newPw);
+      // Password changed — log them in fully.
+      if (passwordChangeUser) {
+        setUser(passwordChangeUser);
+      }
+      navigateAfterLogin(returnTo);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -247,6 +310,115 @@ export function LoginPage() {
             </button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Force-change-password interstitial
+  if (needsPasswordChange) {
+    const canSubmit = newPw && newPw === confirmPw && newPw.length >= 8;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          padding: "1rem",
+        }}
+      >
+        <div style={{ width: 420, maxWidth: "100%" }}>
+          <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--color-warning, #f59e0b)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ marginBottom: "0.75rem" }}
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <h2 style={{ fontSize: "1.125rem", fontWeight: 600, marginBottom: "0.375rem" }}>
+              Password change required
+            </h2>
+            <p className="text-sm text-secondary">
+              {passwordChangeUser?.name ? `Welcome, ${passwordChangeUser.name}. ` : ""}
+              You must set a new password before continuing.
+            </p>
+          </div>
+
+          {error && (
+            <div className="alert error" style={{ marginBottom: "1rem" }}>
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handlePasswordChange} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "0.25rem" }}>
+                New password
+              </label>
+              <input
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                placeholder="Enter new password"
+                autoComplete="new-password"
+                autoFocus
+                style={{
+                  width: "100%", padding: "0.625rem 0.875rem",
+                  background: "var(--color-surface)", border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-lg)", fontSize: "0.9375rem",
+                  color: "var(--color-text)", boxSizing: "border-box",
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "0.25rem" }}>
+                Confirm new password
+              </label>
+              <input
+                type="password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                placeholder="Re-enter new password"
+                autoComplete="new-password"
+                style={{
+                  width: "100%", padding: "0.625rem 0.875rem",
+                  background: "var(--color-surface)", border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-lg)", fontSize: "0.9375rem",
+                  color: "var(--color-text)", boxSizing: "border-box",
+                }}
+                onKeyDown={(e) => e.key === "Enter" && canSubmit && handlePasswordChange(e)}
+              />
+              {confirmPw && newPw !== confirmPw && (
+                <p style={{ fontSize: "0.6875rem", color: "var(--color-danger)", margin: "0.25rem 0 0" }}>
+                  Passwords do not match
+                </p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={loading || !canSubmit}
+              style={{
+                width: "100%", padding: "0.625rem 1rem",
+                fontSize: "0.9375rem", fontWeight: 500,
+                color: "white",
+                background: canSubmit ? "var(--color-primary)" : "var(--color-border)",
+                border: "none", borderRadius: "var(--radius-lg)",
+                cursor: canSubmit ? "pointer" : "default",
+                marginTop: "0.25rem",
+              }}
+            >
+              {loading ? "Changing password..." : "Set new password"}
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
@@ -529,8 +701,99 @@ export function LoginPage() {
           </div>
         )}
 
+        {/* Mandatory OTP setup */}
+        {needsOTPSetup && otpSetupData && (
+          <div>
+            <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
+              <svg
+                width="36"
+                height="36"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--color-primary)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ marginBottom: "0.5rem" }}
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <h3 style={{ fontSize: "1rem", marginBottom: "0.25rem" }}>Set Up Two-Factor Authentication</h3>
+              <p className="text-sm text-secondary">
+                Your administrator requires two-factor authentication. Scan the QR code with your authenticator app to continue.
+              </p>
+            </div>
+            <div style={{ textAlign: "center", marginBottom: "1rem" }}>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpSetupData.otp_url)}`}
+                alt="OTP QR Code"
+                width={200}
+                height={200}
+                style={{ borderRadius: "var(--radius)", background: "#fff", padding: 8 }}
+              />
+            </div>
+            <div
+              style={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius)",
+                padding: "0.625rem 0.75rem",
+                marginBottom: "1rem",
+                textAlign: "center",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.8125rem",
+                letterSpacing: "0.15em",
+                wordBreak: "break-all",
+                userSelect: "all",
+              }}
+            >
+              {otpSetupData.secret}
+            </div>
+            <form onSubmit={handleOTPSetupVerify}>
+              <div>
+                <label htmlFor="otp-setup" className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Enter the code from your app to verify</label>
+                <input
+                  id="otp-setup"
+                  type="text"
+                  value={otpSetupCode}
+                  onChange={(e) => setOtpSetupCode(e.target.value)}
+                  placeholder="000000"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={8}
+                  style={{
+                    textAlign: "center",
+                    letterSpacing: "0.3em",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  width: "100%",
+                  marginTop: "1rem",
+                  padding: "0.625rem",
+                  background: "var(--color-primary)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "var(--radius-lg)",
+                  fontSize: "0.9375rem",
+                  fontWeight: 500,
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                {loading ? <span className="spinner" style={{ width: 18, height: 18 }} /> : "Enable & Continue"}
+              </button>
+            </form>
+          </div>
+        )}
+
         {/* Local login form */}
-        {!pendingApproval && showLocalLogin && (
+        {!pendingApproval && showLocalLogin && !needsOTPSetup && (
           <form onSubmit={handleLogin}>
             {!needsOTP ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>

@@ -69,7 +69,7 @@ var (
 	ErrUnknownAliasType            = errors.New("unknown alias type")
 	ErrUnknownAutoApprover         = errors.New("unknown auto approver type")
 	ErrUnknownOwnerType            = errors.New("unknown owner type")
-	ErrInvalidUsername             = errors.New("username must contain @")
+	ErrInvalidUsername             = errors.New("invalid username")
 	ErrUserNotFound                = errors.New("user not found")
 	ErrMultipleUsersFound          = errors.New("multiple users found")
 	ErrInvalidGroupFormat          = errors.New("group must start with 'group:'")
@@ -145,6 +145,8 @@ func (a AliasWithPorts) MarshalJSON() ([]byte, error) {
 		alias = string(*v)
 	case *Host:
 		alias = string(*v)
+	case *UserOrHost:
+		alias = string(*v)
 	case *Prefix:
 		alias = v.String()
 	case *AutoGroup:
@@ -195,15 +197,17 @@ func (a Asterix) Resolve(_ *Policy, _ types.Users, nodes views.Slice[types.NodeV
 	return ips.IPSet()
 }
 
-// Username is a string that represents a username, it must contain an @.
+// Username is a string that represents a username.
+// It can be an email (user@domain), a local user with trailing @ (user@),
+// or a plain username without @ for headscale local users.
 type Username string
 
 func (u *Username) Validate() error {
-	if isUser(string(*u)) {
-		return nil
+	if len(strings.TrimSpace(string(*u))) == 0 {
+		return fmt.Errorf("%w, got: %q", ErrInvalidUsername, *u)
 	}
 
-	return fmt.Errorf("%w, got: %q", ErrInvalidUsername, *u)
+	return nil
 }
 
 func (u *Username) String() string {
@@ -247,10 +251,8 @@ func (u *Username) CanBeAutoApprover() bool {
 func (u *Username) resolveUser(users types.Users) (types.User, error) {
 	var potentialUsers types.Users
 
-	// At parsetime, we require all usernames to contain an "@" character, if the
-	// username token does not naturally do so (like email), the user have to
-	// add it to the end of the username. We strip it here as we do not expect the
-	// usernames to be stored with the "@".
+	// Strip trailing "@" if present - headscale local users may be specified
+	// as "user@" or just "user" in the policy file.
 	uTrimmed := strings.TrimSuffix(u.String(), "@")
 
 	for _, user := range users {
@@ -496,6 +498,60 @@ func (p *Prefix) Validate() error {
 
 func (p *Prefix) String() string {
 	return netip.Prefix(*p).String()
+}
+
+// UserOrHost represents an ambiguous plain string in the policy file that could
+// be either a host reference (defined in the hosts section) or a username
+// (a headscale local user without @). At resolution time, it first tries to
+// resolve as a Host; if the host is not defined, it falls back to Username.
+type UserOrHost string
+
+func (uh *UserOrHost) Validate() error {
+	s := string(*uh)
+	if len(strings.TrimSpace(s)) == 0 {
+		return fmt.Errorf("%w: %q", ErrInvalidAlias, s)
+	}
+
+	return nil
+}
+
+func (uh *UserOrHost) UnmarshalJSON(b []byte) error {
+	*uh = UserOrHost(strings.Trim(string(b), `"`))
+
+	return uh.Validate()
+}
+
+func (uh *UserOrHost) String() string {
+	return string(*uh)
+}
+
+func (uh *UserOrHost) Resolve(p *Policy, users types.Users, nodes views.Slice[types.NodeView]) (*netipx.IPSet, error) {
+	// Try resolving as a host first (explicitly defined in policy).
+	h := Host(*uh)
+	if _, ok := p.Hosts[h]; ok {
+		return h.Resolve(p, users, nodes)
+	}
+
+	// Try matching against actual node GivenName or Hostname.
+	name := strings.ToLower(string(*uh))
+	var ips netipx.IPSetBuilder
+	found := false
+
+	for _, node := range nodes.All() {
+		if strings.ToLower(node.GivenName()) == name || strings.ToLower(node.Hostname()) == name {
+			node.AppendToIPSet(&ips)
+			found = true
+		}
+	}
+
+	if found {
+		return ips.IPSet()
+	}
+
+	// Fall back to username resolution.
+	u := Username(*uh)
+
+	return u.Resolve(p, users, nodes)
 }
 
 func (p *Prefix) parseString(addr string) error {
@@ -784,8 +840,11 @@ func parseAlias(vs string) (Alias, error) {
 		return new(AutoGroup(vs)), nil
 	}
 
+	// Plain strings without @ or prefix could be either a host reference
+	// or a headscale local username. UserOrHost resolves this at runtime
+	// by checking the hosts section first, then falling back to username.
 	if isHost(vs) {
-		return new(Host(vs)), nil
+		return new(UserOrHost(vs)), nil
 	}
 
 	return nil, fmt.Errorf("%w: %q", ErrInvalidAlias, vs)
@@ -842,6 +901,8 @@ func (a *Aliases) MarshalJSON() ([]byte, error) {
 		case *Tag:
 			aliases[i] = string(*v)
 		case *Host:
+			aliases[i] = string(*v)
+		case *UserOrHost:
 			aliases[i] = string(*v)
 		case *Prefix:
 			aliases[i] = v.String()
@@ -953,6 +1014,12 @@ func parseAutoApprover(s string) (AutoApprover, error) {
 		return new(Tag(s)), nil
 	}
 
+	// Plain strings without @ are treated as headscale local usernames.
+	u := Username(s)
+	if err := u.Validate(); err == nil {
+		return &u, nil
+	}
+
 	return nil, fmt.Errorf("%w: %q", ErrInvalidAutoApprover, s)
 }
 
@@ -1047,6 +1114,12 @@ func parseOwner(s string) (Owner, error) {
 		return new(Tag(s)), nil
 	}
 
+	// Plain strings without @ are treated as headscale local usernames.
+	u := Username(s)
+	if err := u.Validate(); err == nil {
+		return &u, nil
+	}
+
 	return nil, fmt.Errorf("%w: %q", ErrInvalidOwner, s)
 }
 
@@ -1125,14 +1198,15 @@ func (g *Groups) UnmarshalJSON(b []byte) error {
 		var usernames Usernames
 
 		for _, u := range value {
+			// Check for nested groups before treating as username.
+			if isGroup(u) {
+				return fmt.Errorf("%w: found %q inside %q", ErrNestedGroups, u, group)
+			}
+
 			username := Username(u)
 
 			err := username.Validate()
 			if err != nil {
-				if isGroup(u) {
-					return fmt.Errorf("%w: found %q inside %q", ErrNestedGroups, u, group)
-				}
-
 				return err
 			}
 
@@ -2501,6 +2575,8 @@ func (a SSHDstAliases) MarshalJSON() ([]byte, error) {
 		case *AutoGroup:
 			aliases[i] = string(*v)
 		case *Host:
+			aliases[i] = string(*v)
+		case *UserOrHost:
 			aliases[i] = string(*v)
 		case Asterix:
 			// Marshal wildcard as "*" so it gets rejected during unmarshal

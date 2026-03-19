@@ -1,14 +1,15 @@
-import { type ReactNode, useState, useRef, useEffect } from "react";
+import { type ReactNode, useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "./auth";
 import { Link, useRouter } from "./router";
 import { useTheme } from "./theme";
-import { updateProfile, uploadAvatar } from "./api";
+import { updateProfile, uploadAvatar, getOTPStatus, setupOTP, confirmOTP, disableOTP, changePassword, type OTPSetupResponse } from "./api";
 import { getPermissions, type Permissions } from "./permissions";
 
 const navItems = [
   {
     path: "/admin/machines",
     label: "Machines",
+    memberLabel: "My Devices",
     visible: (p: Permissions) => p.canViewMachines,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -125,6 +126,43 @@ export function Layout({ children }: { children: ReactNode }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // OTP state
+  const [otpEnabled, setOtpEnabled] = useState(false);
+  const [otpServerEnabled, setOtpServerEnabled] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpModalOpen, setOtpModalOpen] = useState(false);
+  const [otpSetupData, setOtpSetupData] = useState<OTPSetupResponse | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [otpConfirming, setOtpConfirming] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [showDisableOtp, setShowDisableOtp] = useState(false);
+  const otpModalRef = useRef<HTMLDivElement>(null);
+  const otpInputRef = useRef<HTMLInputElement>(null);
+
+  // Change password state
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [cpCurrentPw, setCpCurrentPw] = useState("");
+  const [cpNewPw, setCpNewPw] = useState("");
+  const [cpConfirmPw, setCpConfirmPw] = useState("");
+  const [cpLoading, setCpLoading] = useState(false);
+  const [cpError, setCpError] = useState("");
+  const [cpMsg, setCpMsg] = useState("");
+
+  const fetchOTPStatus = useCallback(async () => {
+    try {
+      const status = await getOTPStatus();
+      setOtpEnabled(status.otp_enabled);
+      setOtpServerEnabled(status.otp_server_enabled);
+    } catch {
+      // ignore — OTP may not be available
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) fetchOTPStatus();
+  }, [user, fetchOTPStatus]);
+
   // Close popover on outside click
   useEffect(() => {
     if (!profileOpen) return;
@@ -136,6 +174,99 @@ export function Layout({ children }: { children: ReactNode }) {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [profileOpen]);
+
+  // Close OTP modal on outside click
+  useEffect(() => {
+    if (!otpModalOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (otpModalRef.current && !otpModalRef.current.contains(e.target as Node)) {
+        setOtpModalOpen(false);
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") setOtpModalOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [otpModalOpen]);
+
+  // Auto-focus OTP input when modal opens
+  useEffect(() => {
+    if (otpModalOpen && otpInputRef.current) {
+      setTimeout(() => otpInputRef.current?.focus(), 50);
+    }
+  }, [otpModalOpen]);
+
+  async function handleEnableOTP() {
+    setOtpLoading(true);
+    setOtpError("");
+    try {
+      const data = await setupOTP();
+      setOtpSetupData(data);
+      setOtpCode("");
+      setOtpModalOpen(true);
+      setProfileOpen(false);
+    } catch (err: unknown) {
+      setOtpError(err instanceof Error ? err.message : "Failed to set up OTP");
+    } finally {
+      setOtpLoading(false);
+    }
+  }
+
+  async function handleConfirmOTP() {
+    if (otpCode.length < 6) return;
+    setOtpConfirming(true);
+    setOtpError("");
+    try {
+      await confirmOTP(otpCode);
+      setOtpEnabled(true);
+      setOtpModalOpen(false);
+      setOtpSetupData(null);
+      setOtpCode("");
+    } catch (err: unknown) {
+      setOtpError(err instanceof Error ? err.message : "Invalid code");
+    } finally {
+      setOtpConfirming(false);
+    }
+  }
+
+  async function handleDisableOTP() {
+    if (!disablePassword) return;
+    setOtpLoading(true);
+    setOtpError("");
+    try {
+      await disableOTP(disablePassword);
+      setOtpEnabled(false);
+      setShowDisableOtp(false);
+      setDisablePassword("");
+    } catch (err: unknown) {
+      setOtpError(err instanceof Error ? err.message : "Failed to disable OTP");
+    } finally {
+      setOtpLoading(false);
+    }
+  }
+
+  async function handleChangePassword() {
+    if (!cpCurrentPw || !cpNewPw || cpNewPw !== cpConfirmPw || cpNewPw.length < 8) return;
+    setCpLoading(true);
+    setCpError("");
+    setCpMsg("");
+    try {
+      await changePassword(cpCurrentPw, cpNewPw);
+      setCpMsg("Password changed successfully.");
+      setCpCurrentPw("");
+      setCpNewPw("");
+      setCpConfirmPw("");
+    } catch (e) {
+      setCpError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCpLoading(false);
+    }
+  }
 
   function openProfile() {
     setEditDisplayName(user?.display_name || user?.name || "");
@@ -277,7 +408,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   className="text-xs"
                   style={{ color: "var(--color-text-tertiary)" }}
                 >
-                  {user.role === "network_admin" ? "Network admin" : user.role === "it_admin" ? "IT admin" : user.role === "service_account" ? "Service account" : user.role}
+                  {user.role === "network_admin" ? "Network admin" : user.role === "it_admin" ? "IT admin" : user.role}
                 </span>
               </button>
               <button className="ghost sm" onClick={logout}>
@@ -407,14 +538,148 @@ export function Layout({ children }: { children: ReactNode }) {
                     </span>
                   </label>
 
-                  {/* Actions */}
-                  <div className="flex items-center" style={{ gap: "0.5rem", justifyContent: "flex-end" }}>
-                    <button className="ghost sm" onClick={() => setProfileOpen(false)}>
-                      Cancel
-                    </button>
-                    <button className="primary sm" onClick={saveProfile} disabled={saving}>
-                      {saving ? "Saving..." : "Save"}
-                    </button>
+                  {/* Change Password */}
+                  <div style={{ borderTop: "1px solid var(--color-border)", marginTop: "0.75rem", paddingTop: "0.75rem" }}>
+                    <div className="flex items-center justify-between" style={{ marginBottom: showChangePassword ? "0.5rem" : 0 }}>
+                      <div>
+                        <div style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--color-text-secondary)" }}>Password</div>
+                        <div style={{ fontSize: "0.6875rem", color: "var(--color-text-tertiary)", marginTop: 2 }}>
+                          Update your sign-in password
+                        </div>
+                      </div>
+                      {!showChangePassword && (
+                        <button
+                          className="outline sm"
+                          style={{ fontSize: "0.75rem" }}
+                          onClick={() => { setShowChangePassword(true); setCpError(""); setCpMsg(""); setCpCurrentPw(""); setCpNewPw(""); setCpConfirmPw(""); }}
+                        >
+                          Change
+                        </button>
+                      )}
+                    </div>
+                    {showChangePassword && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+                        {cpMsg && <div style={{ fontSize: "0.6875rem", color: "var(--color-success)", marginBottom: "0.25rem" }}>{cpMsg}</div>}
+                        {cpError && <div style={{ fontSize: "0.6875rem", color: "var(--color-danger, #e53e3e)", marginBottom: "0.25rem" }}>{cpError}</div>}
+                        <input
+                          type="password"
+                          placeholder="Current password"
+                          value={cpCurrentPw}
+                          onChange={(e) => setCpCurrentPw(e.target.value)}
+                          autoComplete="current-password"
+                          style={{ width: "100%" }}
+                          autoFocus
+                        />
+                        <input
+                          type="password"
+                          placeholder="New password (min 8 chars)"
+                          value={cpNewPw}
+                          onChange={(e) => setCpNewPw(e.target.value)}
+                          autoComplete="new-password"
+                          style={{ width: "100%" }}
+                        />
+                        <input
+                          type="password"
+                          placeholder="Confirm new password"
+                          value={cpConfirmPw}
+                          onChange={(e) => setCpConfirmPw(e.target.value)}
+                          autoComplete="new-password"
+                          style={{ width: "100%" }}
+                          onKeyDown={(e) => { if (e.key === "Enter" && cpNewPw && cpNewPw === cpConfirmPw && cpNewPw.length >= 8) handleChangePassword(); }}
+                        />
+                        {cpConfirmPw && cpNewPw !== cpConfirmPw && (
+                          <div style={{ fontSize: "0.6875rem", color: "var(--color-danger, #e53e3e)" }}>Passwords do not match</div>
+                        )}
+                        <div className="flex items-center" style={{ gap: "0.375rem", justifyContent: "flex-end", marginTop: "0.25rem" }}>
+                          <button className="ghost sm" style={{ fontSize: "0.75rem" }} onClick={() => setShowChangePassword(false)}>
+                            Cancel
+                          </button>
+                          <button
+                            className="primary sm"
+                            style={{ fontSize: "0.75rem" }}
+                            onClick={handleChangePassword}
+                            disabled={cpLoading || !cpCurrentPw || !cpNewPw || cpNewPw !== cpConfirmPw || cpNewPw.length < 8}
+                          >
+                            {cpLoading ? "Changing..." : "Update password"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Two-factor authentication */}
+                  {otpServerEnabled && (
+                    <div style={{ borderTop: "1px solid var(--color-border)", marginTop: "0.75rem", paddingTop: "0.75rem" }}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--color-text-secondary)" }}>Two-factor authentication</div>
+                          <div style={{ fontSize: "0.6875rem", color: otpEnabled ? "var(--color-success)" : "var(--color-text-tertiary)", marginTop: 2 }}>
+                            {otpEnabled ? "Enabled" : "Not enabled"}
+                          </div>
+                        </div>
+                        {otpEnabled ? (
+                          !showDisableOtp ? (
+                            <button
+                              className="outline sm"
+                              style={{ fontSize: "0.75rem" }}
+                              onClick={() => { setShowDisableOtp(true); setOtpError(""); setDisablePassword(""); }}
+                            >
+                              Disable
+                            </button>
+                          ) : null
+                        ) : (
+                          <button
+                            className="primary sm"
+                            style={{ fontSize: "0.75rem" }}
+                            onClick={handleEnableOTP}
+                            disabled={otpLoading}
+                          >
+                            {otpLoading ? "Setting up..." : "Enable"}
+                          </button>
+                        )}
+                      </div>
+                      {showDisableOtp && (
+                        <div style={{ marginTop: "0.5rem" }}>
+                          <input
+                            type="password"
+                            placeholder="Enter password to confirm"
+                            value={disablePassword}
+                            onChange={(e) => setDisablePassword(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleDisableOTP(); }}
+                            style={{ width: "100%", marginBottom: "0.375rem" }}
+                            autoFocus
+                          />
+                          {otpError && <div style={{ fontSize: "0.6875rem", color: "var(--color-danger, #e53e3e)", marginBottom: "0.375rem" }}>{otpError}</div>}
+                          <div className="flex items-center" style={{ gap: "0.375rem", justifyContent: "flex-end" }}>
+                            <button className="ghost sm" style={{ fontSize: "0.75rem" }} onClick={() => { setShowDisableOtp(false); setOtpError(""); }}>
+                              Cancel
+                            </button>
+                            <button className="danger sm" style={{ fontSize: "0.75rem" }} onClick={handleDisableOTP} disabled={otpLoading || !disablePassword}>
+                              {otpLoading ? "Disabling..." : "Disable 2FA"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions — slide in after a profile field changes */}
+                  <div style={{
+                    display: "grid",
+                    gridTemplateRows: (editDisplayName !== (user?.display_name || user?.name || "") || editPicUrl !== (user?.profile_pic_url || "")) ? "1fr" : "0fr",
+                    opacity: (editDisplayName !== (user?.display_name || user?.name || "") || editPicUrl !== (user?.profile_pic_url || "")) ? 1 : 0,
+                    transition: "grid-template-rows 0.25s ease, opacity 0.25s ease",
+                  }}>
+                    <div style={{ overflow: "hidden" }}>
+                      <div className="flex items-center" style={{ gap: "0.5rem", justifyContent: "flex-end", borderTop: "1px solid var(--color-border)", marginTop: "0.75rem", paddingTop: "0.75rem" }}>
+                        <button className="ghost sm" onClick={() => { setEditDisplayName(user?.display_name || user?.name || ""); setEditPicUrl(user?.profile_pic_url || ""); }}>
+                          Discard
+                        </button>
+                        <button className="primary sm" onClick={saveProfile} disabled={saving}>
+                          {saving ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -422,7 +687,8 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
 
-        {/* Nav tabs row */}
+        {/* Nav tabs row — hidden for members */}
+        {user?.role !== "member" && (
         <nav
           className="flex items-center"
           style={{
@@ -508,6 +774,7 @@ export function Layout({ children }: { children: ReactNode }) {
             )}
           </button>
         </nav>
+        )}
       </header>
 
       {/* Main content */}
@@ -530,6 +797,106 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         )}
       </main>
+
+      {/* OTP Setup Modal */}
+      {otpModalOpen && otpSetupData && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+          }}
+        >
+          <div
+            ref={otpModalRef}
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-lg, 12px)",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.2)",
+              padding: "1.5rem",
+              width: 400,
+              maxWidth: "90vw",
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: "1rem", marginBottom: "0.25rem", color: "var(--color-text)" }}>
+              Set up two-factor authentication
+            </div>
+            <p className="text-sm" style={{ color: "var(--color-text-secondary)", marginBottom: "1rem" }}>
+              Scan the QR code with your authenticator app, then enter the 6-digit code to verify.
+            </p>
+
+            {/* QR Code */}
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpSetupData.otp_url)}`}
+                alt="OTP QR Code"
+                width={180}
+                height={180}
+                style={{ borderRadius: "var(--radius)", background: "#fff", padding: 8 }}
+              />
+            </div>
+
+            {/* Manual secret */}
+            <div style={{ textAlign: "center", marginBottom: "1rem" }}>
+              <div style={{ fontSize: "0.6875rem", color: "var(--color-text-tertiary)", marginBottom: "0.25rem" }}>
+                Or enter this key manually
+              </div>
+              <code
+                style={{
+                  fontSize: "0.8rem",
+                  letterSpacing: "0.05em",
+                  padding: "0.25rem 0.75rem",
+                  background: "var(--color-bg)",
+                  borderRadius: "var(--radius)",
+                  border: "1px solid var(--color-border)",
+                  userSelect: "all",
+                }}
+              >
+                {otpSetupData.secret}
+              </code>
+            </div>
+
+            {/* Verification code input */}
+            <label style={{ display: "block", marginBottom: "0.75rem" }}>
+              <span style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--color-text-secondary)", display: "block", marginBottom: "0.25rem" }}>
+                Verification code
+              </span>
+              <input
+                ref={otpInputRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                maxLength={8}
+                value={otpCode}
+                onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, "")); setOtpError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleConfirmOTP(); }}
+                style={{ width: "100%", textAlign: "center", fontSize: "1.25rem", letterSpacing: "0.2em", fontFamily: "var(--font-mono, monospace)" }}
+              />
+            </label>
+
+            {otpError && (
+              <div style={{ fontSize: "0.75rem", color: "var(--color-danger, #e53e3e)", textAlign: "center", marginBottom: "0.5rem" }}>
+                {otpError}
+              </div>
+            )}
+
+            <div className="flex items-center" style={{ gap: "0.5rem", justifyContent: "flex-end" }}>
+              <button className="ghost sm" onClick={() => { setOtpModalOpen(false); setOtpSetupData(null); setOtpCode(""); setOtpError(""); }}>
+                Cancel
+              </button>
+              <button className="primary sm" onClick={handleConfirmOTP} disabled={otpConfirming || otpCode.length < 6}>
+                {otpConfirming ? "Verifying..." : "Verify & Enable"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

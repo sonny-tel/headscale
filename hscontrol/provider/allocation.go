@@ -8,9 +8,9 @@ import (
 	"tailscale.com/types/key"
 )
 
-// NodeAttrPrefix is the nodeAttr prefix that triggers VPN provider key allocation.
-// A node with attr "use-exit-node-mullvad" would get a key registered with the
-// "mullvad" provider.
+// NodeAttrPrefix is the legacy nodeAttr prefix for VPN provider key allocation.
+// Both "mullvad" (direct provider name) and "use-exit-node-mullvad" (prefixed)
+// are supported in nodeAttrs policy.
 const NodeAttrPrefix = "use-exit-node-"
 
 // NodeInfo is the minimal node information needed for allocation reconciliation.
@@ -20,18 +20,21 @@ type NodeInfo struct {
 	Attrs  []string // from policy NodeAttrsForNode
 }
 
-// providerFromAttr extracts the provider name from a use-exit-node-<provider> attr.
-// Returns empty string if the attr doesn't match.
-func providerFromAttr(attr string) string {
-	if len(attr) <= len(NodeAttrPrefix) {
-		return ""
+// providerFromAttr resolves a nodeAttr to a registered provider name.
+// Matches the attr directly as a provider name first, then falls back to
+// stripping the "use-exit-node-" prefix. Returns empty string if no match.
+func providerFromAttr(attr string, mgr *Manager) string {
+	// Direct provider name match (e.g. "mullvad").
+	if _, ok := mgr.Provider(attr); ok {
+		return attr
 	}
 
-	if attr[:len(NodeAttrPrefix)] != NodeAttrPrefix {
-		return ""
+	// Legacy prefixed match (e.g. "use-exit-node-mullvad").
+	if len(attr) > len(NodeAttrPrefix) && attr[:len(NodeAttrPrefix)] == NodeAttrPrefix {
+		return attr[len(NodeAttrPrefix):]
 	}
 
-	return attr[len(NodeAttrPrefix):]
+	return ""
 }
 
 // ReconcileAllocations ensures that key allocations match the desired state
@@ -51,7 +54,7 @@ func ReconcileAllocations(
 		// Determine which providers this node should be allocated to.
 		wantProviders := make(map[string]bool)
 		for _, attr := range node.Attrs {
-			if prov := providerFromAttr(attr); prov != "" {
+			if prov := providerFromAttr(attr, mgr); prov != "" {
 				wantProviders[prov] = true
 			}
 		}

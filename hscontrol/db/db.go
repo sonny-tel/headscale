@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/netip"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -43,6 +44,27 @@ const (
 	maxOpenConns       = 100
 	contextTimeoutSecs = 10
 )
+
+// Compiled regexps for SQLite-to-PostgreSQL DDL adaptation.
+var (
+	reAutoIncrement = regexp.MustCompile(`(?i)integer\s+PRIMARY\s+KEY\s+AUTOINCREMENT`)
+	reBlob          = regexp.MustCompile(`(?i)\bblob\b`)
+	reDatetime      = regexp.MustCompile(`(?i)\bdatetime\b`)
+	reNumericType   = regexp.MustCompile(`(?i)\bnumeric\b`)
+)
+
+// adaptSQL converts SQLite DDL to PostgreSQL if needed.
+// It rewrites: AUTOINCREMENT→SERIAL, blob→bytea, datetime→timestamptz, numeric→boolean.
+func adaptSQL(dbType string, sql string) string {
+	if dbType == types.DatabaseSqlite {
+		return sql
+	}
+	sql = reAutoIncrement.ReplaceAllString(sql, "SERIAL PRIMARY KEY")
+	sql = reBlob.ReplaceAllString(sql, "bytea")
+	sql = reDatetime.ReplaceAllString(sql, "timestamptz")
+	sql = reNumericType.ReplaceAllString(sql, "boolean")
+	return sql
+}
 
 type HSDatabase struct {
 	DB       *gorm.DB
@@ -736,7 +758,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				Migrate: func(tx *gorm.DB) error {
 					if !tx.Migrator().HasColumn(&types.Node{}, "is_wireguard_only") {
 						err := tx.Exec(
-							"ALTER TABLE nodes ADD COLUMN is_wireguard_only numeric NOT NULL DEFAULT false",
+							adaptSQL(cfg.Database.Type, "ALTER TABLE nodes ADD COLUMN is_wireguard_only numeric NOT NULL DEFAULT false"),
 						).Error
 						if err != nil {
 							return fmt.Errorf("adding is_wireguard_only column: %w", err)
@@ -745,7 +767,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 
 					if !tx.Migrator().HasColumn(&types.Node{}, "is_jailed") {
 						err := tx.Exec(
-							"ALTER TABLE nodes ADD COLUMN is_jailed numeric NOT NULL DEFAULT false",
+							adaptSQL(cfg.Database.Type, "ALTER TABLE nodes ADD COLUMN is_jailed numeric NOT NULL DEFAULT false"),
 						).Error
 						if err != nil {
 							return fmt.Errorf("adding is_jailed column: %w", err)
@@ -804,7 +826,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				// Provider relay servers are NOT stored in the database — they are cached in memory.
 				ID: "202603061500-add-vpn-provider-tables",
 				Migrate: func(tx *gorm.DB) error {
-					err := tx.Exec(`CREATE TABLE IF NOT EXISTS vpn_provider_accounts (
+					err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS vpn_provider_accounts (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					provider_name TEXT NOT NULL,
 					account_id TEXT NOT NULL,
@@ -814,19 +836,19 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 					created_at DATETIME,
 					updated_at DATETIME,
 					UNIQUE(provider_name, account_id)
-				)`).Error
+				)`)).Error
 					if err != nil {
 						return fmt.Errorf("creating vpn_provider_accounts table: %w", err)
 					}
 
-					err = tx.Exec(`CREATE TABLE IF NOT EXISTS vpn_key_allocations (
+					err = tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS vpn_key_allocations (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					account_id INTEGER NOT NULL REFERENCES vpn_provider_accounts(id) ON DELETE CASCADE,
 					node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 					node_key TEXT NOT NULL,
 					allocated_at DATETIME,
 					UNIQUE(account_id, node_key)
-				)`).Error
+				)`)).Error
 					if err != nil {
 						return fmt.Errorf("creating vpn_key_allocations table: %w", err)
 					}
@@ -861,9 +883,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				Migrate: func(tx *gorm.DB) error {
 					// Check if the column exists before attempting to drop it.
 					// This migration is a no-op on fresh databases.
-					var count int64
-					tx.Raw("SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name = 'owner_node_id'").Scan(&count)
-					if count == 0 {
+					if !tx.Migrator().HasColumn(&types.Node{}, "owner_node_id") {
 						return nil
 					}
 
@@ -890,7 +910,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						return fmt.Errorf("adding role to users: %w", err)
 					}
 
-					credSQL := `CREATE TABLE IF NOT EXISTS user_credentials(
+					credSQL := adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS user_credentials(
 						user_id integer PRIMARY KEY,
 						password_hash text,
 						otp_secret text,
@@ -902,7 +922,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						created_at datetime,
 						updated_at datetime,
 						CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-					)`
+					)`)
 					if err := tx.Exec(credSQL).Error; err != nil {
 						return fmt.Errorf("creating user_credentials table: %w", err)
 					}
@@ -913,7 +933,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						return fmt.Errorf("creating git_hub_id index: %w", err)
 					}
 
-					sessSQL := `CREATE TABLE IF NOT EXISTS user_sessions(
+					sessSQL := adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS user_sessions(
 						id text PRIMARY KEY,
 						user_id integer NOT NULL,
 						expires_at datetime NOT NULL,
@@ -921,7 +941,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						ip_address text,
 						user_agent text,
 						CONSTRAINT fk_user_sessions_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-					)`
+					)`)
 					if err := tx.Exec(sessSQL).Error; err != nil {
 						return fmt.Errorf("creating user_sessions table: %w", err)
 					}
@@ -942,13 +962,13 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				// Add runtime_dns_configs table for DB-stored DNS overrides.
 				ID: "202507140100-add-runtime-dns-configs",
 				Migrate: func(tx *gorm.DB) error {
-					err := tx.Exec(`CREATE TABLE IF NOT EXISTS runtime_dns_configs(
+					err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS runtime_dns_configs(
 						id integer PRIMARY KEY AUTOINCREMENT,
 						data text,
 						created_at datetime,
 						updated_at datetime,
 						deleted_at datetime
-					)`).Error
+					)`)).Error
 					if err != nil {
 						return err
 					}
@@ -971,7 +991,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			{
 				ID: "202603100100-add-audit-events",
 				Migrate: func(tx *gorm.DB) error {
-					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS audit_events (
 						id integer PRIMARY KEY AUTOINCREMENT,
 						timestamp datetime NOT NULL,
 						event_type text NOT NULL,
@@ -979,7 +999,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						target_type text DEFAULT '',
 						target_name text DEFAULT '',
 						details text DEFAULT ''
-					)`).Error; err != nil {
+					)`)).Error; err != nil {
 						return err
 					}
 					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)`).Error; err != nil {
@@ -1004,7 +1024,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			{
 				ID: "202603131100-add-advertised-services",
 				Migrate: func(tx *gorm.DB) error {
-					return tx.Exec(`CREATE TABLE IF NOT EXISTS advertised_services (
+					return tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS advertised_services (
 						id integer PRIMARY KEY AUTOINCREMENT,
 						node_id bigint NOT NULL,
 						name text NOT NULL,
@@ -1013,7 +1033,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 						created_at datetime,
 						updated_at datetime,
 						CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
-					)`).Error
+					)`)).Error
 				},
 				Rollback: func(db *gorm.DB) error {
 					return db.Exec(`DROP TABLE IF EXISTS advertised_services`).Error
@@ -1022,14 +1042,14 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			{
 				ID: "202603141200-add-device-attributes",
 				Migrate: func(tx *gorm.DB) error {
-					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS device_attributes (
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS device_attributes (
 						id integer PRIMARY KEY AUTOINCREMENT,
 						node_id bigint NOT NULL,
 						attr_key text NOT NULL,
 						attr_value text NOT NULL,
 						updated_at datetime,
 						CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
-					)`).Error; err != nil {
+					)`)).Error; err != nil {
 						return err
 					}
 					return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_attr_node_key ON device_attributes(node_id, attr_key)`).Error
@@ -1041,14 +1061,14 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			{
 				ID: "202603141201-add-network-flow-logs",
 				Migrate: func(tx *gorm.DB) error {
-					if err := tx.Exec(`CREATE TABLE IF NOT EXISTS network_flow_logs (
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS network_flow_logs (
 						id integer PRIMARY KEY AUTOINCREMENT,
 						node_id bigint NOT NULL,
 						action text NOT NULL,
 						details text DEFAULT '',
 						client_timestamp datetime NOT NULL,
 						received_at datetime NOT NULL
-					)`).Error; err != nil {
+					)`)).Error; err != nil {
 						return err
 					}
 					if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_logs_node_id ON network_flow_logs(node_id)`).Error; err != nil {
@@ -1071,6 +1091,90 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				Rollback: func(db *gorm.DB) error {
 					return nil
 				},
+			},
+			{
+				ID: "202603161500-add-oauth-clients",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS oauth_clients (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						client_id text NOT NULL UNIQUE,
+						hash blob NOT NULL,
+						scopes text NOT NULL DEFAULT '[]',
+						created_at datetime,
+						expiration datetime
+					)`)).Error; err != nil {
+						return err
+					}
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS oauth_tokens (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						o_auth_client_id integer NOT NULL,
+						prefix text NOT NULL UNIQUE,
+						hash blob NOT NULL,
+						scopes text NOT NULL DEFAULT '[]',
+						expires_at datetime NOT NULL,
+						created_at datetime NOT NULL,
+						CONSTRAINT fk_oauth_tokens_client FOREIGN KEY(o_auth_client_id) REFERENCES oauth_clients(id) ON DELETE CASCADE
+					)`)).Error; err != nil {
+						return err
+					}
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error {
+					if err := db.Exec(`DROP TABLE IF EXISTS oauth_tokens`).Error; err != nil {
+						return err
+					}
+					return db.Exec(`DROP TABLE IF EXISTS oauth_clients`).Error
+				},
+			},
+			{
+				ID: "202603161501-add-vip-services",
+				Migrate: func(tx *gorm.DB) error {
+					return tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS vip_services (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						name text NOT NULL UNIQUE,
+						addrs text NOT NULL DEFAULT '[]',
+						comment text NOT NULL DEFAULT '',
+						annotations text NOT NULL DEFAULT '{}',
+						ports text NOT NULL DEFAULT '[]',
+						tags text NOT NULL DEFAULT '[]'
+					)`)).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS vip_services`).Error
+				},
+			},
+			{
+				ID: "202603181500-add-dns-records",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS dns_records (
+						id integer PRIMARY KEY AUTOINCREMENT,
+						name text NOT NULL,
+						type text NOT NULL DEFAULT '',
+						value text NOT NULL,
+						created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+					)`)).Error; err != nil {
+						return err
+					}
+					return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_records_name_type_value ON dns_records(name, type, value)`).Error
+				},
+				Rollback: func(db *gorm.DB) error {
+					return db.Exec(`DROP TABLE IF EXISTS dns_records`).Error
+				},
+			},
+			{
+				ID: "202603191000-add-password-rotation-fields",
+				Migrate: func(tx *gorm.DB) error {
+					if err := tx.Exec(`ALTER TABLE user_credentials ADD COLUMN password_changed_at datetime`).Error; err != nil {
+						return err
+					}
+					if err := tx.Exec(adaptSQL(cfg.Database.Type, `ALTER TABLE user_credentials ADD COLUMN must_change_password numeric NOT NULL DEFAULT false`)).Error; err != nil {
+						return err
+					}
+					// Backfill: set password_changed_at to updated_at for existing credentials that have a password.
+					return tx.Exec(`UPDATE user_credentials SET password_changed_at = updated_at WHERE password_hash IS NOT NULL AND password_hash != ''`).Error
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
 			},
 		},
 	)
@@ -1120,7 +1224,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			)`,
 		}
 		for _, sql := range vpnTables {
-			if err := tx.Exec(sql).Error; err != nil {
+			if err := tx.Exec(adaptSQL(cfg.Database.Type, sql)).Error; err != nil {
 				return err
 			}
 		}
@@ -1136,6 +1240,8 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 				git_hub_login text,
 				failed_login_attempts integer NOT NULL DEFAULT 0,
 				locked_until datetime,
+				password_changed_at datetime,
+				must_change_password numeric NOT NULL DEFAULT false,
 				created_at datetime,
 				updated_at datetime,
 				CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -1151,13 +1257,13 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			)`,
 		}
 		for _, sql := range authTables {
-			if err := tx.Exec(sql).Error; err != nil {
+			if err := tx.Exec(adaptSQL(cfg.Database.Type, sql)).Error; err != nil {
 				return err
 			}
 		}
 
 		// Create audit_events table.
-		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS audit_events (
 			id integer PRIMARY KEY AUTOINCREMENT,
 			timestamp datetime NOT NULL,
 			event_type text NOT NULL,
@@ -1165,7 +1271,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			target_type text DEFAULT '',
 			target_name text DEFAULT '',
 			details text DEFAULT ''
-		)`).Error; err != nil {
+		)`)).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)`).Error; err != nil {
@@ -1176,7 +1282,7 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 		}
 
 		// Create advertised_services table.
-		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS advertised_services (
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS advertised_services (
 			id integer PRIMARY KEY AUTOINCREMENT,
 			node_id bigint NOT NULL,
 			name text NOT NULL,
@@ -1185,22 +1291,74 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '';
 			created_at datetime,
 			updated_at datetime,
 			CONSTRAINT fk_advertised_services_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
-		)`).Error; err != nil {
+		)`)).Error; err != nil {
 			return err
 		}
 
 		// Create device_attributes table.
-		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS device_attributes (
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS device_attributes (
 			id integer PRIMARY KEY AUTOINCREMENT,
 			node_id bigint NOT NULL,
 			attr_key text NOT NULL,
 			attr_value text NOT NULL,
 			updated_at datetime,
 			CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
-		)`).Error; err != nil {
+		)`)).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_attr_node_key ON device_attributes(node_id, attr_key)`).Error; err != nil {
+			return err
+		}
+
+		// Create OAuth client and token tables.
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS oauth_clients (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			client_id text NOT NULL UNIQUE,
+			hash blob NOT NULL,
+			scopes text NOT NULL DEFAULT '[]',
+			created_at datetime,
+			expiration datetime
+		)`)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS oauth_tokens (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			o_auth_client_id integer NOT NULL,
+			prefix text NOT NULL UNIQUE,
+			hash blob NOT NULL,
+			scopes text NOT NULL DEFAULT '[]',
+			expires_at datetime NOT NULL,
+			created_at datetime NOT NULL,
+			CONSTRAINT fk_oauth_tokens_client FOREIGN KEY(o_auth_client_id) REFERENCES oauth_clients(id) ON DELETE CASCADE
+		)`)).Error; err != nil {
+			return err
+		}
+
+		// Create VIP services table.
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS vip_services (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			name text NOT NULL UNIQUE,
+			addrs text NOT NULL DEFAULT '[]',
+			comment text NOT NULL DEFAULT '',
+			annotations text NOT NULL DEFAULT '{}',
+			ports text NOT NULL DEFAULT '[]',
+			tags text NOT NULL DEFAULT '[]'
+		)`)).Error; err != nil {
+			return err
+		}
+
+		// Create DNS records table.
+		if err := tx.Exec(adaptSQL(cfg.Database.Type, `CREATE TABLE IF NOT EXISTS dns_records (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			name text NOT NULL,
+			type text NOT NULL DEFAULT '',
+			value text NOT NULL,
+			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_records_name_type_value ON dns_records(name, type, value)`).Error; err != nil {
 			return err
 		}
 

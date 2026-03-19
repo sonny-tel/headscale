@@ -783,6 +783,11 @@ func (pm *PolicyManager) TagExists(tag string) bool {
 	return exists
 }
 
+// appConnectorCap is the capability key used by Tailscale clients to identify
+// app connector nodes. Nodes with this capability dynamically advertise routes
+// for the domains they serve, and those routes should be auto-approved.
+const appConnectorCap = tailcfg.NodeCapability("tailscale.com/app-connectors")
+
 func (pm *PolicyManager) NodeCanApproveRoute(node types.NodeView, route netip.Prefix) bool {
 	if pm == nil {
 		return false
@@ -808,6 +813,12 @@ func (pm *PolicyManager) NodeCanApproveRoute(node types.NodeView, route netip.Pr
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+
+	// App connector nodes get all non-exit routes auto-approved.
+	// They dynamically resolve domains to IPs and advertise routes for them.
+	if pm.nodeIsAppConnector(node) {
+		return true
+	}
 
 	// The fast path is that a node requests to approve a prefix
 	// where there is an exact entry, e.g. 10.0.0.0/8, then
@@ -837,6 +848,34 @@ func (pm *PolicyManager) NodeCanApproveRoute(node types.NodeView, route netip.Pr
 	return false
 }
 
+// nodeIsAppConnector checks if the given node has the tailscale.com/app-connectors
+// capability via nodeAttrs policy rules. Must be called with pm.mu held.
+func (pm *PolicyManager) nodeIsAppConnector(node types.NodeView) bool {
+	if pm.pol == nil || len(pm.pol.NodeAttrs) == 0 {
+		return false
+	}
+
+	for _, rule := range pm.pol.NodeAttrs {
+		if len(rule.App) == 0 {
+			continue
+		}
+		if _, ok := rule.App[string(appConnectorCap)]; !ok {
+			continue
+		}
+
+		ipSet, err := rule.Target.Resolve(pm.pol, pm.users, pm.nodes)
+		if err != nil {
+			log.Trace().Err(err).Msg("some nodeAttrs targets could not be resolved for app connector check")
+		}
+
+		if ipSet != nil && node.InIPSet(ipSet) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (pm *PolicyManager) Version() int {
 	return 2
 }
@@ -857,11 +896,12 @@ func (pm *PolicyManager) NodeAttrsForNode(node types.NodeView) []string {
 	for _, rule := range pm.pol.NodeAttrs {
 		ipSet, err := rule.Target.Resolve(pm.pol, pm.users, pm.nodes)
 		if err != nil {
-			log.Warn().Err(err).Msg("failed to resolve nodeAttrs target")
-			continue
+			// Log at trace level; missing hostnames are expected when
+			// devices go offline. Use partial results that were resolved.
+			log.Trace().Err(err).Msg("some nodeAttrs targets could not be resolved")
 		}
 
-		if node.InIPSet(ipSet) {
+		if ipSet != nil && node.InIPSet(ipSet) {
 			for _, attr := range rule.Attr {
 				if _, ok := seen[attr]; !ok {
 					seen[attr] = struct{}{}
@@ -896,11 +936,10 @@ func (pm *PolicyManager) NodeAppCapsForNode(node types.NodeView) tailcfg.NodeCap
 
 		ipSet, err := rule.Target.Resolve(pm.pol, pm.users, pm.nodes)
 		if err != nil {
-			log.Warn().Err(err).Msg("failed to resolve nodeAttrs target for app caps")
-			continue
+			log.Trace().Err(err).Msg("some nodeAttrs targets could not be resolved for app caps")
 		}
 
-		if node.InIPSet(ipSet) {
+		if ipSet != nil && node.InIPSet(ipSet) {
 			if caps == nil {
 				caps = make(tailcfg.NodeCapMap)
 			}

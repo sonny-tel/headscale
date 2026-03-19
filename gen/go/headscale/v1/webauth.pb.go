@@ -7,12 +7,13 @@
 package v1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -75,13 +76,14 @@ func (x *LoginWithPasswordRequest) GetPassword() string {
 }
 
 type LoginResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionToken  string                 `protobuf:"bytes,1,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	User          *User                  `protobuf:"bytes,3,opt,name=user,proto3" json:"user,omitempty"`
-	OtpRequired   bool                   `protobuf:"varint,4,opt,name=otp_required,json=otpRequired,proto3" json:"otp_required,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	SessionToken           string                 `protobuf:"bytes,1,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	ExpiresAt              *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	User                   *User                  `protobuf:"bytes,3,opt,name=user,proto3" json:"user,omitempty"`
+	OtpRequired            bool                   `protobuf:"varint,4,opt,name=otp_required,json=otpRequired,proto3" json:"otp_required,omitempty"`
+	PasswordChangeRequired bool                   `protobuf:"varint,5,opt,name=password_change_required,json=passwordChangeRequired,proto3" json:"password_change_required,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *LoginResponse) Reset() {
@@ -138,6 +140,13 @@ func (x *LoginResponse) GetUser() *User {
 func (x *LoginResponse) GetOtpRequired() bool {
 	if x != nil {
 		return x.OtpRequired
+	}
+	return false
+}
+
+func (x *LoginResponse) GetPasswordChangeRequired() bool {
+	if x != nil {
+		return x.PasswordChangeRequired
 	}
 	return false
 }

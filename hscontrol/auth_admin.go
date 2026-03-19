@@ -52,11 +52,11 @@ func (api headscaleV1APIServer) SetUserRole(
 	switch role {
 	case types.UserRoleAdmin,
 		types.UserRoleNetworkAdmin, types.UserRoleITAdmin,
-		types.UserRoleMember, types.UserRoleServiceAccount,
+		types.UserRoleMember,
 		types.UserRolePending:
 	default:
 		return nil, status.Errorf(codes.InvalidArgument,
-			"invalid role %q; must be admin, network_admin, it_admin, member, pending, or service_account", role)
+			"invalid role %q; must be admin, network_admin, it_admin, member, or pending", role)
 	}
 
 	if err := api.h.state.DB().SetUserRole(request.GetId(), role); err != nil {
@@ -113,12 +113,17 @@ func (api headscaleV1APIServer) SetUserCredentials(
 	}
 
 	// Try to get existing credential; create if not found.
+	now := time.Now().UTC()
+	forceChange := api.h.cfg.WebUI.Auth.Local.ForceChangeOnFirstLogin
+
 	cred, err := api.h.state.DB().GetUserCredential(targetID)
 	if err != nil {
 		// No credential yet — create one.
 		_, err = api.h.state.DB().CreateUserCredential(types.UserCredential{
-			UserID:       targetID,
-			PasswordHash: string(hash),
+			UserID:             targetID,
+			PasswordHash:       string(hash),
+			PasswordChangedAt:  &now,
+			MustChangePassword: forceChange,
 		})
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "creating credential: %s", err)
@@ -127,8 +132,10 @@ func (api headscaleV1APIServer) SetUserCredentials(
 		return &v1.SetUserCredentialsResponse{}, nil
 	}
 
-	// Update existing credential.
+	// Update existing credential — admin reset always forces change.
 	cred.PasswordHash = string(hash)
+	cred.PasswordChangedAt = &now
+	cred.MustChangePassword = forceChange
 	if err := api.h.state.DB().UpdateUserCredential(cred); err != nil {
 		return nil, status.Errorf(codes.Internal, "updating credential: %s", err)
 	}
@@ -165,10 +172,10 @@ func (api headscaleV1APIServer) LoginWithPassword(
 		return nil, status.Errorf(codes.Unauthenticated, "invalid credentials")
 	}
 
-	// Service accounts cannot web-auth.
+	// Pending users cannot web-auth.
 	if !user.CanWebAuth() {
 		return nil, status.Errorf(codes.PermissionDenied,
-			"service accounts cannot authenticate via the web UI")
+			"this account cannot authenticate via the web UI")
 	}
 
 	// Get credential record.
@@ -199,12 +206,49 @@ func (api headscaleV1APIServer) LoginWithPassword(
 
 	api.h.state.DB().LogAuditEvent("user.login", user.Name, "user", user.Name, "password login")
 
-	// If OTP is enabled, return partial response.
+	// Check if password change is required (first login or admin reset).
+	// Also check password expiry if rotation is configured.
+	passwordChangeRequired := cred.MustChangePassword
+	if !passwordChangeRequired {
+		localCfg := api.h.cfg.WebUI.Auth.Local
+		if localCfg.PasswordRotationDays > 0 && cred.PasswordChangedAt != nil {
+			expiresAt := cred.PasswordChangedAt.AddDate(0, 0, localCfg.PasswordRotationDays)
+			if time.Now().UTC().After(expiresAt) {
+				passwordChangeRequired = true
+			}
+		}
+	}
+
+	if passwordChangeRequired {
+		// Create a session so the user can call ChangePassword, but signal the frontend.
+		resp, err := api.createSessionResponse(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		resp.PasswordChangeRequired = true
+		return resp, nil
+	}
+
+	// If OTP is enabled for this user, require it.
 	if cred.OTPEnabled && cred.OTPSecret != "" {
 		return &v1.LoginResponse{
 			OtpRequired: true,
 			User:        user.Proto(),
 		}, nil
+	}
+
+	// If OTP is mandatory but user hasn't set it up yet,
+	// create a session (so they can access OTP setup endpoints)
+	// and signal otp_required. The frontend detects session_token +
+	// otp_required together as "setup needed".
+	otpCfg := api.h.cfg.WebUI.Auth.Local.OTP
+	if otpCfg.Enabled && otpCfg.Mandatory && !cred.OTPEnabled {
+		resp, err := api.createSessionResponse(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		resp.OtpRequired = true
+		return resp, nil
 	}
 
 	return api.createSessionResponse(ctx, user)
@@ -332,6 +376,9 @@ func (api headscaleV1APIServer) ChangePassword(
 	}
 
 	cred.PasswordHash = string(hash)
+	now := time.Now().UTC()
+	cred.PasswordChangedAt = &now
+	cred.MustChangePassword = false
 	if err := api.h.state.DB().UpdateUserCredential(cred); err != nil {
 		return nil, status.Errorf(codes.Internal, "updating password: %s", err)
 	}
@@ -470,7 +517,7 @@ func (api headscaleV1APIServer) recordLoginFailure(cred *types.UserCredential) {
 }
 
 // authenticatedWebUser extracts the session token from gRPC metadata
-// and returns the authenticated user. Service accounts are rejected.
+// and returns the authenticated user. Pending users are rejected.
 func (api headscaleV1APIServer) authenticatedWebUser(
 	ctx context.Context,
 ) (*types.User, error) {
@@ -486,7 +533,7 @@ func (api headscaleV1APIServer) authenticatedWebUser(
 
 	if !session.User.CanWebAuth() {
 		return nil, status.Errorf(codes.PermissionDenied,
-			"service accounts cannot use the web UI")
+			"this account cannot use the web UI")
 	}
 
 	return &session.User, nil

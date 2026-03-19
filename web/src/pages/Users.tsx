@@ -4,6 +4,7 @@ import {
   createUser,
   deleteUser,
   setUserRole,
+  setUserCredentials,
   type User,
 } from "../api";
 import { useAuth } from "../auth";
@@ -16,7 +17,6 @@ const ROLE_OPTIONS: { value: string; label: string; description: string }[] = [
   { value: "network_admin", label: "Network admin", description: "Manage network configuration" },
   { value: "it_admin", label: "IT admin", description: "Manage users and devices" },
   { value: "member", label: "Member", description: "Standard network access" },
-  { value: "service_account", label: "Service account", description: "Automated integrations" },
 ];
 
 function roleLabel(role: string): string {
@@ -160,6 +160,8 @@ export function UsersPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
   const [pendingRoles, setPendingRoles] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -182,10 +184,23 @@ export function UsersPage() {
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (newPassword && newPassword !== newPasswordConfirm) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (newPassword && newPassword.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
     try {
-      await createUser(newName, newDisplayName || undefined);
+      const user = await createUser(newName, newDisplayName || undefined);
+      if (newPassword) {
+        await setUserCredentials(user.id, newPassword);
+      }
       setNewName("");
       setNewDisplayName("");
+      setNewPassword("");
+      setNewPasswordConfirm("");
       setShowCreate(false);
       await fetchUsers();
     } catch (err: unknown) {
@@ -292,7 +307,7 @@ export function UsersPage() {
       {showCreate && (
         <form onSubmit={handleCreate} className="card" style={{ marginBottom: "1rem" }}>
           <div className="card-body">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "0.75rem", alignItems: "end" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", alignItems: "end" }}>
               <div>
                 <label className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Username *</label>
                 <input value={newName} onChange={(e) => setNewName(e.target.value)} required style={{ width: "100%" }} />
@@ -301,6 +316,16 @@ export function UsersPage() {
                 <label className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Display Name</label>
                 <input value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} style={{ width: "100%" }} />
               </div>
+              <div>
+                <label className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Password</label>
+                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ width: "100%" }} autoComplete="new-password" />
+              </div>
+              <div>
+                <label className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Confirm Password</label>
+                <input type="password" value={newPasswordConfirm} onChange={(e) => setNewPasswordConfirm(e.target.value)} style={{ width: "100%" }} autoComplete="new-password" />
+              </div>
+            </div>
+            <div style={{ marginTop: "0.75rem", display: "flex", justifyContent: "flex-end" }}>
               <button type="submit">Create</button>
             </div>
           </div>

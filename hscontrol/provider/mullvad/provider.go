@@ -101,19 +101,26 @@ func (p *Provider) ReplaceKey(ctx context.Context, accountID string, oldKey, new
 func parseKeyResponse(keyResp *apiWGKeyResponse) *provider.RegistrationResult {
 	var result provider.RegistrationResult
 
-	if keyResp.IPv4Address != "" {
-		if prefix, err := netip.ParsePrefix(keyResp.IPv4Address); err == nil {
-			result.IPv4 = prefix.Addr()
-		}
-	}
-
-	if keyResp.IPv6Address != "" {
-		if prefix, err := netip.ParsePrefix(keyResp.IPv6Address); err == nil {
-			result.IPv6 = prefix.Addr()
-		}
-	}
+	result.IPv4 = parseAssignedAddr(keyResp.IPv4Address)
+	result.IPv6 = parseAssignedAddr(keyResp.IPv6Address)
 
 	return &result
+}
+
+func parseAssignedAddr(raw string) netip.Addr {
+	if raw == "" {
+		return netip.Addr{}
+	}
+
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		return addr
+	}
+
+	if prefix, err := netip.ParsePrefix(raw); err == nil {
+		return prefix.Addr()
+	}
+
+	return netip.Addr{}
 }
 
 func (p *Provider) AccountInfo(ctx context.Context, accountID string) (*provider.AccountInfo, error) {

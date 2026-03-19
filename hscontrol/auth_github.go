@@ -145,7 +145,7 @@ func (api headscaleV1APIServer) GitHubCallback(
 					"pending_approval:%s", user.Name)
 			}
 			return nil, status.Errorf(codes.PermissionDenied,
-				"service accounts cannot authenticate via the web UI")
+				"this account cannot authenticate via the web UI")
 		}
 
 		return api.createSessionResponse(ctx, user)
@@ -182,7 +182,7 @@ func (api headscaleV1APIServer) GitHubCallback(
 				"pending_approval:%s", user.Name)
 		}
 		return nil, status.Errorf(codes.PermissionDenied,
-			"service accounts cannot authenticate via the web UI")
+			"this account cannot authenticate via the web UI")
 	}
 
 	// Create credential record linked to this GitHub ID.

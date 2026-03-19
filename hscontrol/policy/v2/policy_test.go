@@ -1472,3 +1472,31 @@ func TestNodeAppCapsForNode(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeAttrsForNodePartialHostnameResolution(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1", Email: "user1@headscale.net"},
+	}
+
+	node1 := node("euclid", "100.64.0.1", "fd7a:115c:a1e0::1", users[0])
+	node1.ID = 1
+
+	node2 := node("pixel-9", "100.64.0.2", "fd7a:115c:a1e0::2", users[0])
+	node2.ID = 2
+
+	nodes := types.Nodes{node1, node2}
+
+	pm, err := NewPolicyManager([]byte(`{
+		"nodeAttrs": [{
+			"target": ["euclid", "pixel-9", "missing-host"],
+			"attr": ["mullvad"]
+		}]
+	}`), users, nodes.ViewSlice())
+	require.NoError(t, err)
+
+	attrs1 := pm.NodeAttrsForNode(node1.View())
+	require.Contains(t, attrs1, "mullvad")
+
+	attrs2 := pm.NodeAttrsForNode(node2.View())
+	require.Contains(t, attrs2, "mullvad")
+}

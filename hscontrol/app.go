@@ -53,6 +53,7 @@ import (
 	"github.com/sasha-s/go-deadlock"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -105,6 +106,9 @@ const (
 	headscaleDirPerm   = 0o700
 )
 
+// oauthScopesKey is the context key for OAuth token scopes.
+const oauthScopesKey contextKey = "oauth_scopes"
+
 // Headscale represents the base app of the service.
 type Headscale struct {
 	cfg             *types.Config
@@ -121,6 +125,21 @@ type Headscale struct {
 	mapBatcher     mapper.Batcher
 
 	clientStreamsOpen sync.WaitGroup
+
+	// pendingRegistrations stores device registration requests submitted
+	// by non-admin users that need admin approval.
+	pendingRegistrations   map[string]*PendingRegistration
+	pendingRegistrationsMu sync.RWMutex
+}
+
+// PendingRegistration represents a device registration request submitted
+// by a non-admin user awaiting admin approval.
+type PendingRegistration struct {
+	ID            string `json:"id"`
+	AuthID        string `json:"auth_id"`
+	RequestedBy   string `json:"requested_by"`
+	RequestedByID string `json:"requested_by_id"`
+	RequestedAt   string `json:"requested_at"`
 }
 
 var (
@@ -158,11 +177,12 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	}
 
 	app := Headscale{
-		cfg:               cfg,
-		noisePrivateKey:   noisePrivateKey,
-		sessionSecret:     sessionSecret,
-		clientStreamsOpen: sync.WaitGroup{},
-		state:             s,
+		cfg:                  cfg,
+		noisePrivateKey:      noisePrivateKey,
+		sessionSecret:        sessionSecret,
+		clientStreamsOpen:    sync.WaitGroup{},
+		state:                s,
+		pendingRegistrations: make(map[string]*PendingRegistration),
 	}
 
 	// Initialize ephemeral garbage collector
@@ -291,6 +311,9 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	// Load runtime DNS config override from database (if any).
 	app.loadRuntimeDNSConfig()
 
+	// Merge extra DNS records from all sources (config, file, DB, auto server record).
+	app.rebuildExtraRecords()
+
 	return &app, nil
 }
 
@@ -319,6 +342,9 @@ func (h *Headscale) applyDNSConfig(dns types.DNSConfig) {
 			h.cfg.TailcfgDNSConfig.Routes[d.WithoutTrailingDot()] = nil
 		}
 	}
+
+	// Re-merge extra records from all sources (file manager, DB, auto server).
+	h.rebuildExtraRecords()
 }
 
 // loadRuntimeDNSConfig checks DB for a runtime DNS config override and applies it.
@@ -340,6 +366,53 @@ func (h *Headscale) loadRuntimeDNSConfig() {
 
 	h.applyDNSConfig(dns)
 	log.Info().Msg("loaded runtime DNS config from database")
+}
+
+// rebuildExtraRecords merges extra DNS records from all sources:
+// config file, file manager, database, and auto server_url record.
+// It updates TailcfgDNSConfig.ExtraRecords in place.
+func (h *Headscale) rebuildExtraRecords() {
+	if h.cfg.TailcfgDNSConfig == nil {
+		return
+	}
+
+	var records []tailcfg.DNSRecord
+
+	// 1. Config file extra_records.
+	records = append(records, h.cfg.DNSConfig.ExtraRecords...)
+
+	// 2. File manager records (extra_records_path).
+	if h.extraRecordMan != nil {
+		records = append(records, h.extraRecordMan.Records()...)
+	}
+
+	// 3. Database-managed records.
+	dbRecords, err := h.state.DB().ListDNSRecords()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to load DNS records from database")
+	} else {
+		for _, r := range dbRecords {
+			records = append(records, tailcfg.DNSRecord{
+				Name:  r.Name,
+				Type:  r.Type,
+				Value: r.Value,
+			})
+		}
+	}
+
+	// 4. Auto server_url record.
+	if hostname := h.cfg.Domain(); hostname != "" {
+		if ips, err := net.LookupHost(hostname); err == nil {
+			for _, ipStr := range ips {
+				records = append(records, tailcfg.DNSRecord{
+					Name:  hostname,
+					Value: ipStr,
+				})
+			}
+		}
+	}
+
+	h.cfg.TailcfgDNSConfig.ExtraRecords = records
 }
 
 // fileDefaultsDNSConfig returns the DNS config from the original config file.
@@ -518,7 +591,8 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 				continue
 			}
 
-			h.cfg.TailcfgDNSConfig.ExtraRecords = records
+			_ = records // file records are merged via rebuildExtraRecords
+			h.rebuildExtraRecords()
 
 			h.Change(change.ExtraRecords())
 
@@ -640,28 +714,38 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 
 		// Try Bearer API key authentication first.
 		if strings.HasPrefix(authHeader, AuthPrefix) {
-			valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
-			if err != nil {
-				log.Info().
-					Caller().
-					Err(err).
-					Str("client_address", req.RemoteAddr).
-					Msg("failed to validate token")
-				writeUnauthorized(http.StatusUnauthorized)
+			token := strings.TrimPrefix(authHeader, AuthPrefix)
+
+			// Try API key first.
+			valid, err := h.state.ValidateAPIKey(token)
+			if err == nil && valid {
+				next.ServeHTTP(writer, req)
 
 				return
 			}
 
-			if !valid {
-				log.Info().
-					Str("client_address", req.RemoteAddr).
-					Msg("invalid token")
-				writeUnauthorized(http.StatusUnauthorized)
+			// Try OAuth bearer token.
+			oauthToken, oauthErr := h.state.ValidateOAuthToken(token)
+			if oauthErr == nil && oauthToken != nil {
+				ctx := context.WithValue(req.Context(), oauthScopesKey, oauthToken.Scopes)
+				next.ServeHTTP(writer, req.WithContext(ctx))
 
 				return
 			}
 
-			next.ServeHTTP(writer, req)
+			log.Info().
+				Caller().
+				Str("client_address", req.RemoteAddr).
+				Str("path", req.URL.Path).
+				Str("method", req.Method).
+				Str("token_prefix", func() string {
+					if len(token) > 20 {
+						return token[:20] + "..."
+					}
+					return token
+				}()).
+				Msg("failed to validate token")
+			writeUnauthorized(http.StatusUnauthorized)
 
 			return
 		}
@@ -679,6 +763,9 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 		log.Error().
 			Caller().
 			Str("client_address", req.RemoteAddr).
+			Str("path", req.URL.Path).
+			Str("method", req.Method).
+			Bool("has_auth_header", authHeader != "").
 			Msg("no valid authentication credentials provided")
 		writeUnauthorized(http.StatusUnauthorized)
 	})
@@ -865,6 +952,9 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 		r.HandleFunc("/bootstrap-dns", derpServer.DERPBootstrapDNSHandler(h.state.DERPMap()))
 	}
 
+	// OAuth token exchange — unauthenticated (uses Basic auth with client credentials).
+	r.Post("/api/v2/oauth/token", h.tsOAuthTokenHandler)
+
 	r.Route("/api", func(r chi.Router) {
 		r.Use(h.httpAuthenticationMiddleware)
 
@@ -901,6 +991,19 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				grpcMux.ServeHTTP(w, req)
 			})
 		}
+
+		// Pending registration endpoints: non-admin users can request
+		// device registration, admins can list and approve pending requests.
+		r.Route("/v1/webauth/registration/pending", func(r chi.Router) {
+			// POST /v1/webauth/registration/pending — request registration (any authenticated user)
+			r.Post("/", h.handleRequestRegistration)
+			// GET /v1/webauth/registration/pending — list pending registrations (admin only)
+			r.Get("/", h.handleListPendingRegistrations)
+			// POST /v1/webauth/registration/pending/{id}/approve — approve a pending registration (admin only)
+			r.Post("/{id}/approve", h.handleApprovePendingRegistration)
+			// DELETE /v1/webauth/registration/pending/{id} — reject/delete a pending registration (admin only)
+			r.Delete("/{id}", h.handleDeletePendingRegistration)
+		})
 
 		// DNS config endpoints for the web UI (admin-only).
 		r.Route("/v1/dns/config", func(r chi.Router) {
@@ -1008,6 +1111,92 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				resp["isOverridden"] = false
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(resp) //nolint:errcheck
+			})
+		})
+
+		// DNS records management endpoints (admin-only).
+		r.Route("/v1/dns/records", func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					var isAdmin bool
+					if cookie, err := req.Cookie("hs_session"); err == nil && cookie.Value != "" {
+						if session, err := h.state.DB().ValidateUserSession(cookie.Value); err == nil {
+							isAdmin = session.User.IsAdmin()
+						}
+					}
+					authHeader := req.Header.Get("Authorization")
+					if strings.HasPrefix(authHeader, AuthPrefix) {
+						if valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix)); err == nil && valid {
+							isAdmin = true
+						}
+					}
+					if !isAdmin {
+						http.Error(w, "Forbidden", http.StatusForbidden)
+						return
+					}
+					next.ServeHTTP(w, req)
+				})
+			})
+
+			// GET — list all managed DNS records.
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				records, err := h.state.DB().ListDNSRecords()
+				if err != nil {
+					http.Error(w, "Failed to list records", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(records) //nolint:errcheck
+			})
+
+			// POST — create a new DNS record.
+			r.Post("/", func(w http.ResponseWriter, req *http.Request) {
+				var payload struct {
+					Name  string `json:"name"`
+					Type  string `json:"type"`
+					Value string `json:"value"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+					http.Error(w, "Invalid JSON", http.StatusBadRequest)
+					return
+				}
+				if payload.Name == "" || payload.Value == "" {
+					http.Error(w, "name and value are required", http.StatusBadRequest)
+					return
+				}
+
+				rec, err := h.state.DB().CreateDNSRecord(payload.Name, payload.Type, payload.Value)
+				if err != nil {
+					http.Error(w, "Failed to create record", http.StatusInternalServerError)
+					return
+				}
+
+				h.rebuildExtraRecords()
+				h.Change(change.ExtraRecords())
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(rec) //nolint:errcheck
+			})
+
+			// DELETE /{id} — delete a DNS record by ID.
+			r.Delete("/{id}", func(w http.ResponseWriter, req *http.Request) {
+				idStr := chi.URLParam(req, "id")
+				id, err := strconv.ParseUint(idStr, 10, 64)
+				if err != nil {
+					http.Error(w, "Invalid record ID", http.StatusBadRequest)
+					return
+				}
+
+				if err := h.state.DB().DeleteDNSRecord(id); err != nil {
+					http.Error(w, "Record not found", http.StatusNotFound)
+					return
+				}
+
+				h.rebuildExtraRecords()
+				h.Change(change.ExtraRecords())
+
+				w.WriteHeader(http.StatusNoContent)
 			})
 		})
 
@@ -1409,7 +1598,10 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				}
 
 				machine := nv.GivenName()
-				user := nv.User().Name()
+				var user string
+				if nv.User().Valid() {
+					user = nv.User().Name()
+				}
 
 				for i := range svcs.Len() {
 					svc := svcs.At(i)
@@ -1673,6 +1865,217 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 			w.Write(data) //nolint:errcheck
 		})
 
+		// Policy perspective endpoint — returns what a user can access under the current policy.
+		r.Get("/v1/web/policy/perspective", func(w http.ResponseWriter, req *http.Request) {
+			userIDStr := req.URL.Query().Get("user_id")
+			if userIDStr == "" {
+				http.Error(w, `{"error":"missing user_id parameter"}`, http.StatusBadRequest)
+				return
+			}
+			uid, err := strconv.ParseUint(userIDStr, 10, 64)
+			if err != nil {
+				http.Error(w, `{"error":"invalid user_id"}`, http.StatusBadRequest)
+				return
+			}
+			user, err := h.state.GetUserByID(types.UserID(uid))
+			if err != nil {
+				http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+				return
+			}
+
+			userNodes := h.state.ListNodesByUser(types.UserID(uid))
+			allNodes := h.state.ListNodes()
+
+			addrsToStrings := func(addrs []netip.Addr) []string {
+				out := make([]string, 0, len(addrs))
+				for _, a := range addrs {
+					out = append(out, a.String())
+				}
+				return out
+			}
+
+			formatFilterRules := func(filterRules []tailcfg.FilterRule) []map[string]any {
+				rules := make([]map[string]any, 0, len(filterRules))
+				for _, fr := range filterRules {
+					dstPorts := make([]string, 0, len(fr.DstPorts))
+					for _, dp := range fr.DstPorts {
+						port := dp.IP
+						if dp.Ports.First != 0 || dp.Ports.Last != 65535 {
+							if dp.Ports.First == dp.Ports.Last {
+								port += fmt.Sprintf(":%d", dp.Ports.First)
+							} else {
+								port += fmt.Sprintf(":%d-%d", dp.Ports.First, dp.Ports.Last)
+							}
+						} else {
+							port += ":*"
+						}
+						dstPorts = append(dstPorts, port)
+					}
+					rules = append(rules, map[string]any{
+						"src_ips":   fr.SrcIPs,
+						"dst_ports": dstPorts,
+					})
+				}
+				return rules
+			}
+
+			type peerEntry struct {
+				ID         uint64   `json:"id"`
+				Name       string   `json:"name"`
+				IPs        []string `json:"ips"`
+				User       string   `json:"user,omitempty"`
+				Tags       []string `json:"tags,omitempty"`
+				Online     bool     `json:"online"`
+				CanAccess  bool     `json:"can_access"`
+				AcceptedBy bool     `json:"accepted_by"`
+			}
+
+			type nodeEntry struct {
+				ID          uint64           `json:"id"`
+				Name        string           `json:"name"`
+				IPs         []string         `json:"ips"`
+				Tags        []string         `json:"tags,omitempty"`
+				Online      bool             `json:"online"`
+				Peers       []peerEntry      `json:"peers"`
+				SSHTargets  []map[string]any `json:"ssh_targets"`
+				Features    []string         `json:"features"`
+				FilterRules []map[string]any `json:"filter_rules"`
+			}
+
+			nodeResults := make([]nodeEntry, 0, userNodes.Len())
+
+			for _, node := range userNodes.All() {
+				matchers, err := h.state.MatchersForNode(node)
+				if err != nil {
+					continue
+				}
+				filterRules, err := h.state.FilterForNode(node)
+				if err != nil {
+					continue
+				}
+
+				// Peers this node can access or be accessed by
+				peers := make([]peerEntry, 0)
+				for _, peer := range allNodes.All() {
+					if peer.ID() == node.ID() {
+						continue
+					}
+					canAccess := node.CanAccess(matchers, peer)
+					// Get peer's matchers for the reverse direction
+					peerMatchers, peerErr := h.state.MatchersForNode(peer)
+					acceptedBy := false
+					if peerErr == nil {
+						acceptedBy = peer.CanAccess(peerMatchers, node)
+					}
+					if !canAccess && !acceptedBy {
+						continue
+					}
+					pe := peerEntry{
+						ID:         uint64(peer.ID()),
+						Name:       peer.GivenName(),
+						IPs:        addrsToStrings(peer.IPs()),
+						Online:     false,
+						CanAccess:  canAccess,
+						AcceptedBy: acceptedBy,
+					}
+					if online, ok := peer.IsOnline().GetOk(); ok {
+						pe.Online = online
+					}
+					if puid := peer.TypedUserID(); puid != 0 {
+						if u, err := h.state.GetUserByID(puid); err == nil {
+							pe.User = u.Name
+						}
+					}
+					if peer.IsTagged() {
+						pe.Tags = peer.Proto().Tags
+					}
+					peers = append(peers, pe)
+				}
+
+				// SSH: which nodes can this user SSH into from this node
+				sshTargets := make([]map[string]any, 0)
+				for _, target := range allNodes.All() {
+					if target.ID() == node.ID() {
+						continue
+					}
+					sshPol, err := h.state.SSHPolicy(target)
+					if err != nil || sshPol == nil {
+						continue
+					}
+					// Check if any SSH rule matches our node as a source
+					for _, rule := range sshPol.Rules {
+						matched := false
+						for _, p := range rule.Principals {
+							for _, nodeIP := range node.IPs() {
+								if p.NodeIP == nodeIP.String() {
+									matched = true
+									break
+								}
+							}
+							if matched {
+								break
+							}
+						}
+						if matched {
+							action := "accept"
+							if rule.Action != nil && rule.Action.HoldAndDelegate != "" {
+								action = "check"
+							}
+							users := make([]string, 0)
+							for k := range rule.SSHUsers {
+								users = append(users, k)
+							}
+							sshTargets = append(sshTargets, map[string]any{
+								"node_id":   uint64(target.ID()),
+								"node_name": target.GivenName(),
+								"node_ips":  addrsToStrings(target.IPs()),
+								"action":    action,
+								"ssh_users": users,
+							})
+							break // one match per target is enough
+						}
+					}
+				}
+
+				// Features: nodeAttrs + app caps
+				features := h.state.NodeAttrsForNode(node)
+				if features == nil {
+					features = []string{}
+				}
+				appCaps := h.state.NodeAppCapsForNode(node)
+				for cap := range appCaps {
+					features = append(features, string(cap))
+				}
+
+				ne := nodeEntry{
+					ID:          uint64(node.ID()),
+					Name:        node.GivenName(),
+					IPs:         addrsToStrings(node.IPs()),
+					Tags:        node.Proto().Tags,
+					Online:      false,
+					Peers:       peers,
+					SSHTargets:  sshTargets,
+					Features:    features,
+					FilterRules: formatFilterRules(filterRules),
+				}
+				if online, ok := node.IsOnline().GetOk(); ok {
+					ne.Online = online
+				}
+				nodeResults = append(nodeResults, ne)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]any{
+					"id":           uint64(user.ID),
+					"name":         user.Name,
+					"display_name": user.DisplayName,
+					"email":        user.Email,
+				},
+				"nodes": nodeResults,
+			}) //nolint:errcheck
+		})
+
 		// Server info endpoint — returns version, config basics for the admin UI.
 		r.Get("/v1/server/info", func(w http.ResponseWriter, req *http.Request) {
 			versionInfo := types.GetVersionInfo()
@@ -1694,6 +2097,23 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				"logLevel":           h.cfg.Log.Level.String(),
 				"policyMode":         h.cfg.Policy.Mode,
 				"collectServices":    h.cfg.CollectServices,
+
+				// Extended config fields for Settings UI
+				"listenAddr":                     h.cfg.Addr,
+				"metricsAddr":                    h.cfg.MetricsAddr,
+				"grpcAddr":                       h.cfg.GRPCAddr,
+				"grpcAllowInsecure":              h.cfg.GRPCAllowInsecure,
+				"ephemeralNodeInactivityTimeout": h.cfg.EphemeralNodeInactivityTimeout.String(),
+				"randomizeClientPort":            h.cfg.RandomizeClientPort,
+				"loginEnabled":                   h.cfg.LogTail.Enabled,
+				"spoofProviderDomains":           h.cfg.SpoofProviderDomains,
+				"taildropEnabled":                h.cfg.Taildrop.Enabled,
+				"dnsMagicDns":                    h.cfg.DNSConfig.MagicDNS,
+				"dnsOverrideLocalDns":            h.cfg.DNSConfig.OverrideLocalDNS,
+				"ipAllocation":                   string(h.cfg.IPAllocation),
+				"oidcEnabled":                    h.cfg.OIDC.Issuer != "",
+				"oidcIssuer":                     h.cfg.OIDC.Issuer,
+				"webUiEnabled":                   h.cfg.WebUI.Enabled,
 			}
 			if h.cfg.PrefixV4 != nil {
 				info["prefixV4"] = h.cfg.PrefixV4.String()
@@ -1703,6 +2123,97 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(info) //nolint:errcheck
+		})
+
+		// Runtime config update endpoint — allows changing select settings at runtime.
+		r.Patch("/v1/server/config", func(w http.ResponseWriter, req *http.Request) {
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+				return
+			}
+			if v, ok := body["collectServices"]; ok {
+				if b, ok := v.(bool); ok {
+					h.cfg.CollectServices = b
+				}
+			}
+			if v, ok := body["spoofProviderDomains"]; ok {
+				if b, ok := v.(bool); ok {
+					h.cfg.SpoofProviderDomains = b
+				}
+			}
+			if v, ok := body["logLevel"]; ok {
+				if s, ok := v.(string); ok {
+					lvl, err := zl.ParseLevel(s)
+					if err == nil {
+						h.cfg.Log.Level = lvl
+						zl.SetGlobalLevel(lvl)
+					}
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
+		})
+
+		// OTP status for the authenticated user.
+		r.Get("/v1/webauth/otp/status", func(w http.ResponseWriter, req *http.Request) {
+			cookie, err := req.Cookie("hs_session")
+			if err != nil || cookie.Value == "" {
+				http.Error(w, `{"error":"session required"}`, http.StatusUnauthorized)
+				return
+			}
+			session, err := h.state.DB().ValidateUserSession(cookie.Value)
+			if err != nil {
+				http.Error(w, `{"error":"invalid session"}`, http.StatusUnauthorized)
+				return
+			}
+			cred, err := h.state.DB().GetUserCredential(uint64(session.User.ID))
+			otpEnabled := false
+			if err == nil && cred != nil {
+				otpEnabled = cred.OTPEnabled
+			}
+			otpServerEnabled := h.cfg.WebUI.Auth.Local.OTP.Enabled
+			otpMandatory := h.cfg.WebUI.Auth.Local.OTP.Mandatory
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"otp_enabled":%t,"otp_server_enabled":%t,"otp_mandatory":%t}`, otpEnabled, otpServerEnabled, otpMandatory)
+		})
+
+		// Disable OTP for the authenticated user.
+		r.Post("/v1/webauth/otp/disable", func(w http.ResponseWriter, req *http.Request) {
+			cookie, err := req.Cookie("hs_session")
+			if err != nil || cookie.Value == "" {
+				http.Error(w, `{"error":"session required"}`, http.StatusUnauthorized)
+				return
+			}
+			session, err := h.state.DB().ValidateUserSession(cookie.Value)
+			if err != nil {
+				http.Error(w, `{"error":"invalid session"}`, http.StatusUnauthorized)
+				return
+			}
+			cred, err := h.state.DB().GetUserCredential(uint64(session.User.ID))
+			if err != nil {
+				http.Error(w, `{"error":"no credentials found"}`, http.StatusBadRequest)
+				return
+			}
+			var body struct {
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.Password == "" {
+				http.Error(w, `{"error":"password required"}`, http.StatusBadRequest)
+				return
+			}
+			if err := bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(body.Password)); err != nil {
+				http.Error(w, `{"error":"invalid password"}`, http.StatusUnauthorized)
+				return
+			}
+			cred.OTPEnabled = false
+			cred.OTPSecret = ""
+			if err := h.state.DB().UpdateUserCredential(cred); err != nil {
+				http.Error(w, `{"error":"failed to disable OTP"}`, http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
 		})
 
 		// ── Debug endpoints (admin-only, gated by debug_panel feature flag) ──
@@ -1771,6 +2282,7 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 					Nodes           int `json:"nodes"`
 					DeviceExitNodes int `json:"deviceExitNodes"`
 					VPNExitNodes    int `json:"vpnExitNodes"`
+					TaggedDevices   int `json:"taggedDevices"`
 				}
 				if err := json.NewDecoder(req.Body).Decode(&params); err != nil {
 					http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -1800,12 +2312,19 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				if params.VPNExitNodes > 10 {
 					params.VPNExitNodes = 10
 				}
+				if params.TaggedDevices < 0 {
+					params.TaggedDevices = 0
+				}
+				if params.TaggedDevices > 20 {
+					params.TaggedDevices = 20
+				}
 
 				created := struct {
 					Users           []string `json:"users"`
 					Nodes           []string `json:"nodes"`
 					DeviceExitNodes []string `json:"deviceExitNodes"`
 					VPNExitNodes    []string `json:"vpnExitNodes"`
+					TaggedDevices   []string `json:"taggedDevices"`
 				}{}
 
 				users := make([]*types.User, 0, params.Users)
@@ -1834,6 +2353,13 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 
 				fakeHosts := []string{"laptop", "desktop", "server", "workstation", "nas", "pi", "vm", "container", "gateway", "proxy"}
 				fakeOS := []string{"linux", "windows", "macOS", "iOS", "android"}
+				// Subnet routes some nodes will advertise
+				fakeSubnets := [][]netip.Prefix{
+					{netip.MustParsePrefix("192.168.1.0/24")},
+					{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("10.0.1.0/24")},
+					{netip.MustParsePrefix("172.16.0.0/16")},
+					{netip.MustParsePrefix("192.168.100.0/24"), netip.MustParsePrefix("192.168.200.0/24"), netip.MustParsePrefix("10.10.0.0/16")},
+				}
 				for i := range params.Nodes {
 					user := users[i%len(users)]
 					hostname := fmt.Sprintf("%s-%s-%d", user.Name, fakeHosts[i%len(fakeHosts)], i)
@@ -1863,6 +2389,23 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 						Expiry:         &expiry,
 						LastSeen:       &lastSeen,
 						Hostinfo:       &hostinfo,
+					}
+
+					// Every other node advertises subnet routes, some approved some not
+					if i%2 == 0 && i/2 < len(fakeSubnets) {
+						subnets := fakeSubnets[i/2]
+						hostinfo.RoutableIPs = subnets
+						node.Hostinfo = &hostinfo
+						// First node has routes approved, others are pending
+						if i == 0 {
+							node.ApprovedRoutes = subnets
+						}
+					}
+					// Node at index 3 advertises exit node (pending approval)
+					if i == 3 {
+						exitPending := []netip.Prefix{tsaddr.AllIPv4(), tsaddr.AllIPv6()}
+						hostinfo.RoutableIPs = append(hostinfo.RoutableIPs, exitPending...)
+						node.Hostinfo = &hostinfo
 					}
 
 					ipv4, ipv6, err := h.state.AllocateNextIPs()
@@ -1996,6 +2539,73 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 					created.VPNExitNodes = append(created.VPNExitNodes, hostname)
 				}
 
+				// Create tagged devices — nodes owned by tags, not users
+				tagSets := [][]string{
+					{"tag:server"},
+					{"tag:k8s", "tag:production"},
+					{"tag:monitoring"},
+					{"tag:k8s", "tag:staging", "tag:web"},
+					{"tag:database", "tag:production"},
+					{"tag:ci"},
+					{"tag:iot", "tag:home"},
+					{"tag:server", "tag:monitoring", "tag:production"},
+					{"tag:web", "tag:staging"},
+					{"tag:ci", "tag:build"},
+					{"tag:database", "tag:staging", "tag:backup"},
+					{"tag:k8s", "tag:production", "tag:ingress", "tag:web"},
+					{"tag:iot"},
+					{"tag:server", "tag:production"},
+					{"tag:monitoring", "tag:alerting"},
+					{"tag:ci", "tag:build", "tag:deploy"},
+					{"tag:database"},
+					{"tag:k8s", "tag:monitoring", "tag:production"},
+					{"tag:web"},
+					{"tag:iot", "tag:home", "tag:sensor"},
+				}
+				taggedHosts := []string{"api-gw", "worker", "prometheus", "nginx", "postgres", "runner", "sensor-hub", "grafana", "envoy", "redis", "pgbackup", "traefik", "doorbell", "app-srv", "alertmgr", "deployer", "mysql", "loki", "landing", "thermostat"}
+				taggedOS := []string{"linux", "linux", "linux", "linux", "linux"} // tagged devices are mostly Linux
+				for i := range params.TaggedDevices {
+					hostname := fmt.Sprintf("%s-%d", taggedHosts[i%len(taggedHosts)], i)
+					tags := tagSets[i%len(tagSets)]
+
+					nodeKey := key.NewNode()
+					machineKey := key.NewMachine()
+					discoKey := key.NewDisco()
+
+					now := time.Now().UTC()
+					lastSeen := now.Add(-time.Duration(i*5) * time.Minute)
+
+					hostinfo := tailcfg.Hostinfo{
+						OS:       taggedOS[i%len(taggedOS)],
+						Hostname: hostname,
+					}
+
+					node := types.Node{
+						MachineKey:     machineKey.Public(),
+						NodeKey:        nodeKey.Public(),
+						DiscoKey:       discoKey.Public(),
+						Hostname:       hostname,
+						GivenName:      hostname,
+						Tags:           tags,
+						RegisterMethod: "debug_seed",
+						LastSeen:       &lastSeen,
+						Hostinfo:       &hostinfo,
+					}
+
+					ipv4, ipv6, err := h.state.AllocateNextIPs()
+					if err != nil {
+						continue
+					}
+					node.IPv4 = ipv4
+					node.IPv6 = ipv6
+
+					if err := h.state.SaveNodeDirect(&node); err != nil {
+						continue
+					}
+
+					created.TaggedDevices = append(created.TaggedDevices, fmt.Sprintf("%s [%s]", hostname, strings.Join(tags, ", ")))
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(created) //nolint:errcheck
 			})
@@ -2068,6 +2678,32 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *chi.Mux {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(removed) //nolint:errcheck
 			})
+		})
+
+		// --- OAuth Client Management (admin REST API) ---
+		r.Route("/v1/oauth", func(r chi.Router) {
+			r.Get("/clients", h.oauthListClientsHandler)
+			r.Post("/clients", h.oauthCreateClientHandler)
+			r.Delete("/clients/{id}", h.oauthDeleteClientHandler)
+		})
+
+		// --- Tailscale v2 REST API (for K8s operator compatibility) ---
+		r.Route("/v2", func(r chi.Router) {
+			// Auth keys (maps to pre-auth keys)
+			r.Post("/tailnet/{tailnet}/keys", h.tsCreateKeyHandler)
+			r.Get("/tailnet/{tailnet}/keys/{keyID}", h.tsGetKeyHandler)
+			r.Delete("/tailnet/{tailnet}/keys/{keyID}", h.tsDeleteKeyHandler)
+
+			// Devices (maps to nodes)
+			r.Get("/device/{deviceID}", h.tsGetDeviceHandler)
+			r.Delete("/device/{deviceID}", h.tsDeleteDeviceHandler)
+			r.Get("/tailnet/{tailnet}/devices", h.tsListDevicesHandler)
+
+			// VIP Services
+			r.Get("/tailnet/{tailnet}/vip-services", h.tsListVIPServicesHandler)
+			r.Get("/tailnet/{tailnet}/vip-services/{name}", h.tsGetVIPServiceHandler)
+			r.Put("/tailnet/{tailnet}/vip-services/{name}", h.tsCreateOrUpdateVIPServiceHandler)
+			r.Delete("/tailnet/{tailnet}/vip-services/{name}", h.tsDeleteVIPServiceHandler)
 		})
 
 		r.HandleFunc("/v1/*", h.webRoleAuthorizationHandler(grpcMux))
@@ -2439,6 +3075,32 @@ func (h *Headscale) Serve() error {
 	log.Info().
 		Msgf("listening and serving HTTP on: %s", h.cfg.Addr)
 
+	// Start a separate plain HTTP server for the web UI if listen_addr is configured.
+	// This allows the web UI to sit behind a reverse proxy on a different port
+	// from the main Tailscale control plane listener.
+	var webUIServer *http.Server
+
+	if h.cfg.WebUI.Enabled && h.cfg.WebUI.ListenAddr != "" {
+		webUIListener, listenErr := new(net.ListenConfig).Listen(
+			context.Background(), "tcp", h.cfg.WebUI.ListenAddr,
+		)
+		if listenErr != nil {
+			return fmt.Errorf("binding web UI to TCP address %s: %w", h.cfg.WebUI.ListenAddr, listenErr)
+		}
+
+		webUIServer = &http.Server{
+			Addr:         h.cfg.WebUI.ListenAddr,
+			Handler:      router,
+			ReadTimeout:  types.HTTPTimeout,
+			WriteTimeout: types.HTTPTimeout,
+		}
+
+		errorGroup.Go(func() error { return webUIServer.Serve(webUIListener) })
+
+		log.Info().
+			Msgf("listening and serving web UI on: %s", h.cfg.WebUI.ListenAddr)
+	}
+
 	// Only start debug/metrics server if address is configured
 	var debugHTTPServer *http.Server
 
@@ -2534,6 +3196,15 @@ func (h *Headscale) Serve() error {
 					err := debugHTTPServer.Shutdown(shutdownCtx)
 					if err != nil {
 						log.Error().Err(err).Msg("failed to shutdown prometheus http")
+					}
+				}
+
+				if webUIServer != nil {
+					info("shutting down web UI http server")
+
+					err := webUIServer.Shutdown(shutdownCtx)
+					if err != nil {
+						log.Error().Err(err).Msg("failed to shutdown web UI http")
 					}
 				}
 

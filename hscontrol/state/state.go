@@ -1527,6 +1527,36 @@ func (s *State) ValidateAPIKey(keyStr string) (bool, error) {
 	return s.db.ValidateAPIKey(keyStr)
 }
 
+// ValidateOAuthToken validates an OAuth bearer token and returns its scopes if valid.
+func (s *State) ValidateOAuthToken(tokenStr string) (*types.OAuthToken, error) {
+	return s.db.ValidateOAuthToken(tokenStr)
+}
+
+// ValidateOAuthClientCredentials validates OAuth client credentials.
+func (s *State) ValidateOAuthClientCredentials(clientID, clientSecret string) (*types.OAuthClient, error) {
+	return s.db.ValidateOAuthClientCredentials(clientID, clientSecret)
+}
+
+// CreateOAuthToken creates a new bearer token for an OAuth client.
+func (s *State) CreateOAuthToken(client *types.OAuthClient) (string, error) {
+	return s.db.CreateOAuthToken(client)
+}
+
+// CreateOAuthClient creates a new OAuth client with the given scopes.
+func (s *State) CreateOAuthClient(scopes []string, expiration *time.Time) (string, string, *types.OAuthClient, error) {
+	return s.db.CreateOAuthClient(scopes, expiration)
+}
+
+// ListOAuthClients returns all OAuth clients.
+func (s *State) ListOAuthClients() ([]types.OAuthClient, error) {
+	return s.db.ListOAuthClients()
+}
+
+// DeleteOAuthClient removes an OAuth client and its tokens.
+func (s *State) DeleteOAuthClient(id uint64) error {
+	return s.db.DeleteOAuthClient(id)
+}
+
 // CreateAPIKey generates a new API key with optional expiration.
 func (s *State) CreateAPIKey(expiration *time.Time) (string, *types.APIKey, error) {
 	return s.db.CreateAPIKey(expiration)

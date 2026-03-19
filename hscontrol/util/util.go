@@ -291,28 +291,39 @@ func IsCI() bool {
 //
 // Strategy:
 // 1. If hostinfo is nil/empty → generate default from keys
-// 2. If hostname is provided → normalise it
-// 3. If normalisation fails → generate invalid-<random> replacement
+// 2. If hostname is provided → validate or normalise it
+// 3. If hostname is generic/invalid → try DeviceModel, then Machine
+// 4. If no usable device name exists → generate default from keys
+// 5. Final fallback → generate invalid-<random> replacement
 //
 // Returns the guaranteed-valid hostname to use.
 func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) string {
 	hostname := ""
 	if hostinfo.Valid() {
-		hostname = strings.ToLower(hostinfo.Hostname())
+		hostname = hostinfo.Hostname()
 	}
 
-	// Mobile devices often report empty or generic hostnames (e.g. "localhost").
-	// Fall back to DeviceModel which contains the actual device name (e.g. "Pixel 7a").
-	if hostname == "" || IsGenericHostname(hostname) {
+	if name := hostnameFromCandidate(hostname); name != "" && !IsGenericHostname(name) {
+		return name
+	}
+
+	// Mobile devices often report empty or generic hostnames (e.g. "localhost"
+	// or "android"). Fall back to richer fields which may contain the actual
+	// device name.
+	if hostname == "" || IsGenericHostname(strings.ToLower(hostname)) {
 		if hostinfo.Valid() {
 			if name := hostnameFromDeviceModel(hostinfo); name != "" {
+				return name
+			}
+
+			if name := hostnameFromMachine(hostinfo); name != "" {
 				return name
 			}
 		}
 	}
 
 	// No usable hostname at all — generate from keys.
-	if hostname == "" {
+	if hostname == "" || IsGenericHostname(strings.ToLower(hostname)) {
 		key := cmp.Or(machineKey, nodeKey)
 		if key == "" {
 			return "unknown-node"
@@ -324,10 +335,6 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 		}
 
 		return "node-" + keyPrefix
-	}
-
-	if err := ValidateHostname(hostname); err == nil {
-		return hostname
 	}
 
 	return InvalidString()
@@ -351,11 +358,53 @@ func hostnameFromDeviceModel(hostinfo tailcfg.HostinfoView) string {
 		return ""
 	}
 
-	// Replace spaces with hyphens before NormaliseHostname strips them.
-	model = strings.ReplaceAll(model, " ", "-")
+	return hostnameFromCandidate(model)
+}
 
-	name, err := NormaliseHostname(model)
-	if err != nil {
+func hostnameFromMachine(hostinfo tailcfg.HostinfoView) string {
+	machine := strings.ToLower(strings.TrimSpace(hostinfo.Machine()))
+	if machine == "" || isGenericMachine(machine) {
+		return ""
+	}
+
+	return hostnameFromCandidate(machine)
+}
+
+func isGenericMachine(machine string) bool {
+	switch machine {
+	case "amd64", "x86_64", "x64", "386", "i386", "i686", "arm64", "aarch64", "arm", "armv7l", "armv8l":
+		return true
+	default:
+		return false
+	}
+}
+
+func hostnameFromCandidate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	raw = strings.ToLower(raw)
+	raw = strings.ReplaceAll(raw, " ", "-")
+	raw = strings.ReplaceAll(raw, "_", "-")
+
+	if err := ValidateHostname(raw); err == nil {
+		return raw
+	}
+
+	name := invalidDNSRegex.ReplaceAllString(raw, "")
+	name = strings.Trim(name, "-.")
+	if len(name) > LabelHostnameLength {
+		name = name[:LabelHostnameLength]
+		name = strings.Trim(name, "-.")
+	}
+
+	if name == "" {
+		return ""
+	}
+
+	if err := ValidateHostname(name); err != nil {
 		return ""
 	}
 

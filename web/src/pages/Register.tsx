@@ -1,17 +1,26 @@
 import { useState } from "react";
-import { approveRegistration } from "../api";
+import { approveRegistration, requestRegistration } from "../api";
+import { useAuth } from "../auth";
 
 export function RegisterPage({ authId }: { authId: string }) {
-  const [status, setStatus] = useState<"pending" | "approving" | "done" | "error">("pending");
+  const [status, setStatus] = useState<"pending" | "approving" | "done" | "requested" | "error">("pending");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const { user } = useAuth();
 
-  async function handleApprove() {
+  const isAdmin = user?.role === "admin";
+
+  async function handleAction() {
     setStatus("approving");
     setError("");
     try {
-      await approveRegistration(authId);
-      setStatus("done");
+      if (isAdmin) {
+        await approveRegistration(authId);
+        setStatus("done");
+      } else {
+        await requestRegistration(authId);
+        setStatus("requested");
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
@@ -87,7 +96,11 @@ export function RegisterPage({ authId }: { authId: string }) {
             </svg>
             <span style={{ fontWeight: 500, fontSize: "0.875rem" }}>A device wants to join your network</span>
           </div>
-          <p className="text-xs text-tertiary">Review the details below and approve to register this machine.</p>
+          <p className="text-xs text-tertiary">
+            {isAdmin
+              ? "Review the details below and approve to register this machine."
+              : "Review the details below and submit a registration request. An admin will need to approve it."}
+          </p>
         </div>
 
         {status === "done" ? (
@@ -126,6 +139,43 @@ export function RegisterPage({ authId }: { authId: string }) {
               Go to Dashboard
             </a>
           </div>
+        ) : status === "requested" ? (
+          <div
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-lg)",
+              padding: "1.5rem",
+              textAlign: "center",
+            }}
+          >
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--color-warning, #f59e0b)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ marginBottom: "0.75rem" }}
+            >
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            <h3 style={{ fontSize: "1rem", marginBottom: "0.375rem" }}>Registration Requested</h3>
+            <p className="text-sm text-secondary" style={{ marginBottom: "1.25rem" }}>
+              Your request has been submitted. An administrator will review and approve it.
+              The device will connect once approved.
+            </p>
+            <a
+              href="/admin"
+              className="btn primary"
+              style={{ textDecoration: "none" }}
+            >
+              Go to Dashboard
+            </a>
+          </div>
         ) : (
           <div
             style={{
@@ -135,7 +185,8 @@ export function RegisterPage({ authId }: { authId: string }) {
               padding: "1.5rem",
             }}
           >
-            {/* Manual CLI registration command */}
+            {/* Manual CLI registration command (admin only) */}
+            {isAdmin && (
             <div style={{ marginBottom: "1rem" }}>
               <label className="text-xs text-secondary" style={{ display: "block", marginBottom: 4 }}>Or register manually via CLI</label>
               <div
@@ -161,6 +212,7 @@ export function RegisterPage({ authId }: { authId: string }) {
                 </span>
               </div>
             </div>
+            )}
 
             {error && (
               <div className="alert error" style={{ marginBottom: "1rem" }}>
@@ -179,17 +231,17 @@ export function RegisterPage({ authId }: { authId: string }) {
               </a>
               <button
                 className="btn primary"
-                onClick={handleApprove}
+                onClick={handleAction}
                 disabled={status === "approving"}
                 style={{ flex: 1, borderRadius: "var(--radius-lg)", padding: "0.625rem 1rem", fontSize: "0.875rem" }}
               >
                 {status === "approving" ? (
                   <span className="flex items-center gap-2" style={{ justifyContent: "center" }}>
                     <span className="spinner" style={{ width: 14, height: 14 }} />
-                    Approving{"\u2026"}
+                    {isAdmin ? "Approving\u2026" : "Requesting\u2026"}
                   </span>
                 ) : (
-                  "Approve Registration"
+                  isAdmin ? "Approve Registration" : "Request Registration"
                 )}
               </button>
             </div>

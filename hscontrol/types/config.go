@@ -116,13 +116,14 @@ type Config struct {
 }
 
 type DNSConfig struct {
-	MagicDNS         bool   `mapstructure:"magic_dns"`
-	BaseDomain       string `mapstructure:"base_domain"`
-	OverrideLocalDNS bool   `mapstructure:"override_local_dns"`
-	Nameservers      Nameservers
-	SearchDomains    []string            `mapstructure:"search_domains"`
-	ExtraRecords     []tailcfg.DNSRecord `mapstructure:"extra_records"`
-	ExtraRecordsPath string              `mapstructure:"extra_records_path"`
+	MagicDNS              bool   `mapstructure:"magic_dns"`
+	BaseDomain            string `mapstructure:"base_domain"`
+	OverrideLocalDNS      bool   `mapstructure:"override_local_dns"`
+	BaseDomainPassthrough bool   `mapstructure:"base_domain_passthrough"`
+	Nameservers           Nameservers
+	SearchDomains         []string            `mapstructure:"search_domains"`
+	ExtraRecords          []tailcfg.DNSRecord `mapstructure:"extra_records"`
+	ExtraRecordsPath      string              `mapstructure:"extra_records_path"`
 }
 
 type Nameservers struct {
@@ -244,6 +245,7 @@ type PolicyConfig struct {
 // WebUIConfig contains configuration for the embedded admin web UI.
 type WebUIConfig struct {
 	Enabled    bool                 `mapstructure:"enabled"`
+	ListenAddr string               `mapstructure:"listen_addr"`
 	StaticPath string               `mapstructure:"static_path"`
 	BasePath   string               `mapstructure:"base_path"`
 	Session    WebUISessionConfig   `mapstructure:"session"`
@@ -271,16 +273,19 @@ type WebUIAuthConfig struct {
 
 // WebUILocalAuthConfig contains local password auth settings.
 type WebUILocalAuthConfig struct {
-	Enabled           bool           `mapstructure:"enabled"`
-	MinPasswordLength int            `mapstructure:"min_password_length"`
-	MaxLoginAttempts  int            `mapstructure:"max_login_attempts"`
-	LockoutDuration   time.Duration  `mapstructure:"lockout_duration"`
-	OTP               WebUIOTPConfig `mapstructure:"otp"`
+	Enabled                 bool           `mapstructure:"enabled"`
+	MinPasswordLength       int            `mapstructure:"min_password_length"`
+	MaxLoginAttempts        int            `mapstructure:"max_login_attempts"`
+	LockoutDuration         time.Duration  `mapstructure:"lockout_duration"`
+	PasswordRotationDays    int            `mapstructure:"password_rotation_days"`
+	ForceChangeOnFirstLogin bool           `mapstructure:"force_change_on_first_login"`
+	OTP                     WebUIOTPConfig `mapstructure:"otp"`
 }
 
 // WebUIOTPConfig contains TOTP settings.
 type WebUIOTPConfig struct {
 	Enabled   bool   `mapstructure:"enabled"`
+	Mandatory bool   `mapstructure:"mandatory"`
 	Issuer    string `mapstructure:"issuer"`
 	Digits    int    `mapstructure:"digits"`
 	Period    int    `mapstructure:"period"`
@@ -445,6 +450,7 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("dns.base_domain", "")
 	viper.SetDefault("tailnet_display_name", "")
 	viper.SetDefault("dns.override_local_dns", true)
+	viper.SetDefault("dns.base_domain_passthrough", false)
 	viper.SetDefault("dns.nameservers.global", []string{})
 	viper.SetDefault("dns.nameservers.split", map[string]string{})
 	viper.SetDefault("dns.search_domains", []string{})
@@ -496,6 +502,7 @@ func LoadConfig(path string, isFile bool) error {
 
 	// Web UI defaults
 	viper.SetDefault("web_ui.enabled", false)
+	viper.SetDefault("web_ui.listen_addr", "")
 	viper.SetDefault("web_ui.static_path", "/var/lib/headscale/web-ui")
 	viper.SetDefault("web_ui.base_path", "/admin")
 	viper.SetDefault("web_ui.session.secret_path", "/var/lib/headscale/session_secret")
@@ -509,6 +516,7 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("web_ui.auth.local.max_login_attempts", 5)
 	viper.SetDefault("web_ui.auth.local.lockout_duration", "15m")
 	viper.SetDefault("web_ui.auth.local.otp.enabled", false)
+	viper.SetDefault("web_ui.auth.local.otp.mandatory", false)
 	viper.SetDefault("web_ui.auth.local.otp.issuer", "headscale")
 	viper.SetDefault("web_ui.auth.local.otp.digits", 6)
 	viper.SetDefault("web_ui.auth.local.otp.period", 30)
@@ -758,6 +766,7 @@ func policyConfig() PolicyConfig {
 func webUIConfig() WebUIConfig {
 	return WebUIConfig{
 		Enabled:    viper.GetBool("web_ui.enabled"),
+		ListenAddr: viper.GetString("web_ui.listen_addr"),
 		StaticPath: viper.GetString("web_ui.static_path"),
 		BasePath:   viper.GetString("web_ui.base_path"),
 		Session: WebUISessionConfig{
@@ -770,12 +779,15 @@ func webUIConfig() WebUIConfig {
 		},
 		Auth: WebUIAuthConfig{
 			Local: WebUILocalAuthConfig{
-				Enabled:           viper.GetBool("web_ui.auth.local.enabled"),
-				MinPasswordLength: viper.GetInt("web_ui.auth.local.min_password_length"),
-				MaxLoginAttempts:  viper.GetInt("web_ui.auth.local.max_login_attempts"),
-				LockoutDuration:   viper.GetDuration("web_ui.auth.local.lockout_duration"),
+				Enabled:                 viper.GetBool("web_ui.auth.local.enabled"),
+				MinPasswordLength:       viper.GetInt("web_ui.auth.local.min_password_length"),
+				MaxLoginAttempts:        viper.GetInt("web_ui.auth.local.max_login_attempts"),
+				LockoutDuration:         viper.GetDuration("web_ui.auth.local.lockout_duration"),
+				PasswordRotationDays:    viper.GetInt("web_ui.auth.local.password_rotation_days"),
+				ForceChangeOnFirstLogin: viper.GetBool("web_ui.auth.local.force_change_on_first_login"),
 				OTP: WebUIOTPConfig{
 					Enabled:   viper.GetBool("web_ui.auth.local.otp.enabled"),
+					Mandatory: viper.GetBool("web_ui.auth.local.otp.mandatory"),
 					Issuer:    viper.GetString("web_ui.auth.local.otp.issuer"),
 					Digits:    viper.GetInt("web_ui.auth.local.otp.digits"),
 					Period:    viper.GetInt("web_ui.auth.local.otp.period"),
@@ -908,6 +920,7 @@ func dns() (DNSConfig, error) {
 	dns.MagicDNS = viper.GetBool("dns.magic_dns")
 	dns.BaseDomain = viper.GetString("dns.base_domain")
 	dns.OverrideLocalDNS = viper.GetBool("dns.override_local_dns")
+	dns.BaseDomainPassthrough = viper.GetBool("dns.base_domain_passthrough")
 	dns.Nameservers.Global = viper.GetStringSlice("dns.nameservers.global")
 	dns.Nameservers.Split = viper.GetStringMapStringSlice("dns.nameservers.split")
 	dns.SearchDomains = viper.GetStringSlice("dns.search_domains")
@@ -1012,6 +1025,21 @@ func DNSToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
 	}
 
 	routes := dns.splitResolvers()
+
+	// When base_domain_passthrough is enabled, add the base domain as a
+	// split DNS route with the global resolvers. This overrides the
+	// client-side MagicDNS authoritative zone for the base domain,
+	// allowing names that don't match any tailnet node (e.g. the
+	// headscale server_url) to be resolved via upstream DNS instead
+	// of returning NXDOMAIN.
+	// MagicDNS peer names still resolve because the Tailscale client
+	// checks its local Hosts map before consulting Routes.
+	if dns.BaseDomainPassthrough && dns.BaseDomain != "" && dns.MagicDNS {
+		globalRes := dns.globalResolvers()
+		if len(globalRes) > 0 {
+			routes[dns.BaseDomain] = globalRes
+		}
+	}
 
 	cfg.Routes = routes
 	if dns.BaseDomain != "" {
@@ -1172,7 +1200,10 @@ func LoadServerConfig() (*Config, error) {
 	if dnsConfig.BaseDomain != "" {
 		err := isSafeServerURL(serverURL, dnsConfig.BaseDomain)
 		if err != nil {
-			return nil, err
+			log.Warn().Err(err).
+				Str("server_url", serverURL).
+				Str("base_domain", dnsConfig.BaseDomain).
+				Msg("server_url/base_domain overlap may cause MagicDNS issues")
 		}
 	}
 

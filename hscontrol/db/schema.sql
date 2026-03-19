@@ -170,6 +170,8 @@ CREATE TABLE user_credentials(
   git_hub_login text,
   failed_login_attempts integer NOT NULL DEFAULT 0,
   locked_until datetime,
+  password_changed_at datetime,
+  must_change_password numeric NOT NULL DEFAULT false,
   created_at datetime,
   updated_at datetime,
   CONSTRAINT fk_user_credentials_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -218,3 +220,43 @@ CREATE TABLE device_attributes(
   CONSTRAINT fk_device_attributes_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX idx_device_attr_node_key ON device_attributes(node_id, attr_key);
+
+CREATE TABLE oauth_clients(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  client_id text NOT NULL UNIQUE,
+  hash blob NOT NULL,
+  scopes text NOT NULL DEFAULT '[]',
+  created_at datetime,
+  expiration datetime
+);
+
+CREATE TABLE oauth_tokens(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  o_auth_client_id integer NOT NULL,
+  prefix text NOT NULL UNIQUE,
+  hash blob NOT NULL,
+  scopes text NOT NULL DEFAULT '[]',
+  expires_at datetime NOT NULL,
+  created_at datetime NOT NULL,
+  CONSTRAINT fk_oauth_tokens_client FOREIGN KEY(o_auth_client_id) REFERENCES oauth_clients(id) ON DELETE CASCADE
+);
+
+CREATE TABLE vip_services(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  name text NOT NULL UNIQUE,
+  addrs text NOT NULL DEFAULT '[]',
+  comment text NOT NULL DEFAULT '',
+  annotations text NOT NULL DEFAULT '{}',
+  ports text NOT NULL DEFAULT '[]',
+  tags text NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE dns_records(
+  id integer PRIMARY KEY AUTOINCREMENT,
+  name text NOT NULL,
+  type text NOT NULL DEFAULT '',
+  value text NOT NULL,
+  created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX idx_dns_records_name_type_value ON dns_records(name, type, value);

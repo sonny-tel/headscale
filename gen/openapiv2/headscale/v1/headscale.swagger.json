@@ -2005,6 +2005,9 @@
         },
         "otpRequired": {
           "type": "boolean"
+        },
+        "passwordChangeRequired": {
+          "type": "boolean"
         }
       }
     },

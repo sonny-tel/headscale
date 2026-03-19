@@ -304,11 +304,11 @@ func TestUnmarshalPolicy(t *testing.T) {
 						Action:   "accept",
 						Protocol: "tcp",
 						Sources: Aliases{
-							hp("subnet-1"),
+							uhp("subnet-1"),
 						},
 						Destinations: []AliasWithPorts{
 							{
-								Alias: hp("host-1"),
+								Alias: uhp("host-1"),
 								Ports: []tailcfg.PortRange{{First: 80, Last: 88}},
 							},
 						},
@@ -368,18 +368,25 @@ func TestUnmarshalPolicy(t *testing.T) {
 			wantErr: "alias not supported for SSH source: v2.Asterix",
 		},
 		{
-			name: "invalid-username",
+			name: "plain-username-in-group",
 			input: `
 {
 	"groups": {
 		"group:example": [
 			"valid@",
-			"invalid",
+			"plainuser",
 		],
 	},
 }
 `,
-			wantErr: `username must contain @, got: "invalid"`,
+			want: &Policy{
+				Groups: Groups{
+					Group("group:example"): Usernames{
+						Username("valid@"),
+						Username("plainuser"),
+					},
+				},
+			},
 		},
 		{
 			name: "invalid-group",
@@ -461,7 +468,7 @@ func TestUnmarshalPolicy(t *testing.T) {
 			wantErr: `invalid autogroup: got "autogroup:invalid", must be one of [autogroup:internet autogroup:member autogroup:nonroot autogroup:tagged autogroup:self]`,
 		},
 		{
-			name: "undefined-hostname-errors-2490",
+			name: "plain-username-as-alias-2490",
 			input: `
 {
   "acls": [
@@ -477,7 +484,22 @@ func TestUnmarshalPolicy(t *testing.T) {
   ]
 }
 `,
-			wantErr: `host not defined in policy: "user1"`,
+			want: &Policy{
+				ACLs: []ACL{
+					{
+						Action: "accept",
+						Sources: Aliases{
+							uhp("user1"),
+						},
+						Destinations: []AliasWithPorts{
+							{
+								Alias: uhp("user1"),
+								Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
+							},
+						},
+					},
+				},
+			},
 		},
 		{
 			name: "defined-hostname-does-not-err-2490",
@@ -507,11 +529,11 @@ func TestUnmarshalPolicy(t *testing.T) {
 					{
 						Action: "accept",
 						Sources: Aliases{
-							hp("user1"),
+							uhp("user1"),
 						},
 						Destinations: []AliasWithPorts{
 							{
-								Alias: hp("user1"),
+								Alias: uhp("user1"),
 								Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
 							},
 						},
@@ -2115,6 +2137,7 @@ func TestUnmarshalPolicy(t *testing.T) {
 func gp(s string) *Group          { return new(Group(s)) }
 func up(s string) *Username       { return new(Username(s)) }
 func hp(s string) *Host           { return new(Host(s)) }
+func uhp(s string) *UserOrHost    { return new(UserOrHost(s)) }
 func tp(s string) *Tag            { return new(Tag(s)) }
 func agp(s string) *AutoGroup     { return new(AutoGroup(s)) }
 func mp(pref string) netip.Prefix { return netip.MustParsePrefix(pref) }
@@ -3322,19 +3345,18 @@ func TestNodeCanHaveTag(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "invalid-group",
+			name: "unmatched-username-in-group",
 			policy: &Policy{
 				Groups: Groups{
-					"group:testgroup": Usernames{"invalid"},
+					"group:testgroup": Usernames{"nomatch"},
 				},
 				TagOwners: TagOwners{
 					Tag("tag:test"): Owners{new(Group("group:testgroup"))},
 				},
 			},
-			node:    nodes[0],
-			tag:     "tag:test",
-			want:    false,
-			wantErr: "username must contain @",
+			node: nodes[0],
+			tag:  "tag:test",
+			want: false,
 		},
 		{
 			name: "node-cannot-have-tag",

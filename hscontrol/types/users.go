@@ -26,12 +26,11 @@ var ErrCannotParseBoolean = errors.New("cannot parse value as boolean")
 
 // UserRole constants define access levels for the web UI and API.
 const (
-	UserRoleAdmin          = "admin"
-	UserRoleNetworkAdmin   = "network_admin"
-	UserRoleITAdmin        = "it_admin"
-	UserRoleMember         = "member"
-	UserRoleServiceAccount = "service_account"
-	UserRolePending        = "pending"
+	UserRoleAdmin        = "admin"
+	UserRoleNetworkAdmin = "network_admin"
+	UserRoleITAdmin      = "it_admin"
+	UserRoleMember       = "member"
+	UserRolePending      = "pending"
 )
 
 type UserID uint64
@@ -104,9 +103,8 @@ type User struct {
 	ProfilePicURL string
 
 	// Role controls the user's access level for the web UI and API.
-	// One of: "admin", "network_admin", "it_admin", "member", "service_account".
-	// Defaults to "member". Service accounts cannot perform web
-	// authentication — they operate only via API keys / preauth keys.
+	// One of: "admin", "network_admin", "it_admin", "member", "pending".
+	// Defaults to "member".
 	Role string `gorm:"not null;default:member"`
 }
 
@@ -153,9 +151,9 @@ func (u *User) profilePicURL() string {
 }
 
 // CanWebAuth returns true if the user's role permits web UI authentication.
-// Service accounts and pending users cannot authenticate via the web UI.
+// Pending users cannot authenticate via the web UI.
 func (u *User) CanWebAuth() bool {
-	return u.Role != UserRoleServiceAccount && u.Role != UserRolePending
+	return u.Role != UserRolePending
 }
 
 // IsPending returns true if the user account is pending admin approval.

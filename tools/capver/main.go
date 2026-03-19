@@ -23,18 +23,19 @@ import (
 )
 
 const (
-	ghcrTokenURL                = "https://ghcr.io/token?service=ghcr.io&scope=repository:tailscale/tailscale:pull" //nolint:gosec
-	ghcrTagsURL                 = "https://ghcr.io/v2/tailscale/tailscale/tags/list?n=10000"
-	rawFileURL                  = "https://github.com/tailscale/tailscale/raw/refs/tags/%s/tailcfg/tailcfg.go"
-	outputFile                  = "../../hscontrol/capver/capver_generated.go"
-	testFile                    = "../../hscontrol/capver/capver_test_data.go"
-	fallbackCapVer              = 90
-	maxTestCases                = 4
-	supportedMajorMinorVersions = 10
-	filePermissions             = 0o600
-	semverMatchGroups           = 4
-	latest3Count                = 3
-	latest2Count                = 2
+	ghcrTokenURL                 = "https://ghcr.io/token?service=ghcr.io&scope=repository:tailscale/tailscale:pull" //nolint:gosec
+	ghcrTagsURL                  = "https://ghcr.io/v2/tailscale/tailscale/tags/list?n=10000"
+	rawFileURL                   = "https://github.com/tailscale/tailscale/raw/refs/tags/%s/tailcfg/tailcfg.go"
+	outputFile                   = "../../hscontrol/capver/capver_generated.go"
+	testFile                     = "../../hscontrol/capver/capver_test_data.go"
+	fallbackCapVer               = 90
+	maxTestCases                 = 4
+	supportedMajorMinorVersions  = 10
+	minimumSupportedVersionFloor = "v1.58"
+	filePermissions              = 0o600
+	semverMatchGroups            = 4
+	latest3Count                 = 3
+	latest2Count                 = 2
 )
 
 var errUnexpectedStatusCode = errors.New("unexpected status code")
@@ -255,10 +256,16 @@ func calculateMinSupportedCapabilityVersion(versions map[string]tailcfg.Capabili
 		return fallbackCapVer
 	}
 
-	// The minimum supported version is the oldest of the latest 10
+	// The minimum supported version is the oldest of the latest N,
+	// unless we have an explicit compatibility floor for older platforms.
 	oldestSupportedMinor := minorVersions[len(minorVersions)-supportedCount]
+	minSupportedCapVer := versions[oldestSupportedMinor]
 
-	return versions[oldestSupportedMinor]
+	if floorCapVer, ok := versions[minimumSupportedVersionFloor]; ok && floorCapVer < minSupportedCapVer {
+		return floorCapVer
+	}
+
+	return minSupportedCapVer
 }
 
 func writeCapabilityVersionsToFile(versions map[string]tailcfg.CapabilityVersion, minSupportedCapVer tailcfg.CapabilityVersion) error {
@@ -312,7 +319,7 @@ func writeCapabilityVersionsToFile(versions map[string]tailcfg.CapabilityVersion
 
 	// Add the MinSupportedCapabilityVersion constant
 	content.WriteString("// MinSupportedCapabilityVersion represents the minimum capability version\n")
-	content.WriteString("// supported by this Headscale instance (latest 10 minor versions)\n")
+	content.WriteString(fmt.Sprintf("// supported by this Headscale instance (latest %d minor versions, floored at %s)\n", supportedMajorMinorVersions, minimumSupportedVersionFloor))
 	fmt.Fprintf(&content, "const MinSupportedCapabilityVersion tailcfg.CapabilityVersion = %d\n", minSupportedCapVer)
 
 	// Format the generated code

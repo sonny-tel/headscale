@@ -63,7 +63,7 @@ export interface Node {
 
 export interface PreAuthKey {
   id: string;
-  user: string;
+  user: User;
   key: string;
   reusable: boolean;
   ephemeral: boolean;
@@ -78,6 +78,7 @@ export interface LoginResponse {
   expires_at: string;
   user: User;
   otp_required: boolean;
+  password_change_required: boolean;
 }
 
 export interface AuthMethods {
@@ -196,6 +197,52 @@ export async function verifyOTP(code: string): Promise<LoginResponse> {
   return resp;
 }
 
+export interface OTPSetupResponse {
+  secret: string;
+  otp_url: string;
+}
+
+export interface OTPStatus {
+  otp_enabled: boolean;
+  otp_server_enabled: boolean;
+  otp_mandatory: boolean;
+}
+
+export async function getOTPStatus(): Promise<OTPStatus> {
+  return request<OTPStatus>("/webauth/otp/status");
+}
+
+export async function setupOTP(): Promise<OTPSetupResponse> {
+  return request<OTPSetupResponse>("/webauth/otp/setup", { method: "POST" });
+}
+
+export async function confirmOTP(code: string): Promise<LoginResponse> {
+  return request<LoginResponse>("/webauth/otp/verify", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function disableOTP(password: string): Promise<void> {
+  await request("/webauth/otp/disable", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request("/webauth/password/change", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+}
+
 export async function getGitHubAuthURL(): Promise<string> {
   const resp = await request<{ auth_url: string }>("/webauth/github");
   return resp.auth_url;
@@ -245,6 +292,38 @@ export async function approveRegistration(authId: string, user?: string): Promis
   });
 }
 
+export interface PendingRegistration {
+  id: string;
+  auth_id: string;
+  requested_by: string;
+  requested_by_id: string;
+  requested_at: string;
+}
+
+export async function requestRegistration(authId: string): Promise<{ status: string; id?: string }> {
+  return request<{ status: string; id?: string }>("/webauth/registration/pending", {
+    method: "POST",
+    body: JSON.stringify({ auth_id: authId }),
+  });
+}
+
+export async function listPendingRegistrations(): Promise<PendingRegistration[]> {
+  const resp = await request<{ pending_registrations: PendingRegistration[] }>("/webauth/registration/pending");
+  return resp.pending_registrations ?? [];
+}
+
+export async function approvePendingRegistration(id: string): Promise<void> {
+  await request(`/webauth/registration/pending/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+  });
+}
+
+export async function rejectPendingRegistration(id: string): Promise<void> {
+  await request(`/webauth/registration/pending/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 // --- Users ---
 
 export async function listUsers(): Promise<User[]> {
@@ -276,6 +355,16 @@ export async function setUserRole(id: string, role: string): Promise<User> {
     body: JSON.stringify({ role }),
   });
   return resp.user;
+}
+
+export async function setUserCredentials(
+  userId: string,
+  password: string,
+): Promise<void> {
+  await request(`/user/${userId}/credentials`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
 }
 
 // --- Profile ---
@@ -381,6 +470,20 @@ export async function renameNode(
   return resp.node;
 }
 
+export async function setApprovedRoutes(
+  nodeId: string,
+  routes: string[],
+): Promise<Node> {
+  const resp = await request<{ node: Node }>(
+    `/node/${nodeId}/approve_routes`,
+    {
+      method: "POST",
+      body: JSON.stringify({ routes }),
+    },
+  );
+  return resp.node;
+}
+
 export async function setNodeTags(
   id: string,
   tags: string[],
@@ -394,9 +497,9 @@ export async function setNodeTags(
 
 // --- PreAuth Keys ---
 
-export async function listPreAuthKeys(user: string): Promise<PreAuthKey[]> {
+export async function listPreAuthKeys(): Promise<PreAuthKey[]> {
   const resp = await request<{ pre_auth_keys: PreAuthKey[] }>(
-    `/preauthkey?user=${encodeURIComponent(user)}`,
+    `/preauthkey`,
   );
   return resp.pre_auth_keys ?? [];
 }
@@ -410,18 +513,18 @@ export async function createPreAuthKey(params: {
 }): Promise<PreAuthKey> {
   const resp = await request<{ pre_auth_key: PreAuthKey }>("/preauthkey", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      ...params,
+      user: params.user,
+    }),
   });
   return resp.pre_auth_key;
 }
 
-export async function expirePreAuthKey(params: {
-  user: string;
-  key: string;
-}): Promise<void> {
+export async function expirePreAuthKey(id: string): Promise<void> {
   await request("/preauthkey/expire", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({ id }),
   });
 }
 
@@ -472,6 +575,48 @@ export async function setPolicy(policy: string): Promise<PolicyData> {
     method: "PUT",
     body: JSON.stringify({ policy }),
   });
+}
+
+// --- Policy Perspective ---
+
+export interface PerspectivePeer {
+  id: number;
+  name: string;
+  ips: string[];
+  user?: string;
+  tags?: string[];
+  online: boolean;
+  can_access: boolean;
+  accepted_by: boolean;
+}
+
+export interface PerspectiveSSHTarget {
+  node_id: number;
+  node_name: string;
+  node_ips: string[];
+  action: string;
+  ssh_users: string[];
+}
+
+export interface PerspectiveNode {
+  id: number;
+  name: string;
+  ips: string[];
+  tags?: string[];
+  online: boolean;
+  peers: PerspectivePeer[];
+  ssh_targets: PerspectiveSSHTarget[];
+  features: string[];
+  filter_rules: { src_ips: string[]; dst_ports: string[] }[];
+}
+
+export interface PerspectiveResult {
+  user: { id: number; name: string; display_name: string; email: string };
+  nodes: PerspectiveNode[];
+}
+
+export async function getPolicyPerspective(userId: string): Promise<PerspectiveResult> {
+  return request<PerspectiveResult>(`/web/policy/perspective?user_id=${encodeURIComponent(userId)}`);
 }
 
 // --- DNS Config ---
@@ -684,6 +829,22 @@ export interface ServerInfo {
   prefixV4?: string;
   prefixV6?: string;
   collectServices?: boolean;
+  // Extended fields
+  listenAddr?: string;
+  metricsAddr?: string;
+  grpcAddr?: string;
+  grpcAllowInsecure?: boolean;
+  ephemeralNodeInactivityTimeout?: string;
+  randomizeClientPort?: boolean;
+  spoofProviderDomains?: boolean;
+  taildropEnabled?: boolean;
+  dnsMagicDns?: boolean;
+  dnsOverrideLocalDns?: boolean;
+  ipAllocation?: string;
+  oidcEnabled?: boolean;
+  oidcIssuer?: string;
+  webUiEnabled?: boolean;
+  loginEnabled?: boolean;
 }
 
 export async function getServerInfo(): Promise<ServerInfo> {
@@ -693,6 +854,16 @@ export async function getServerInfo(): Promise<ServerInfo> {
   });
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
   return res.json();
+}
+
+export async function updateServerConfig(updates: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${API_BASE}/server/config`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
 }
 
 // --- Discovered Services ---
@@ -960,4 +1131,40 @@ export async function purgeSeededData(): Promise<PurgeResult> {
   });
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
   return res.json();
+}
+
+// --- OAuth Clients ---
+
+export interface OAuthClient {
+  id: number;
+  client_id: string;
+  scopes: string[];
+  created_at: string;
+  expiration: string;
+}
+
+export interface OAuthCreateResponse {
+  client_id: string;
+  client_secret: string;
+  scopes: string[];
+  expiration: string;
+}
+
+export async function listOAuthClients(): Promise<OAuthClient[]> {
+  const resp = await request<{ clients: OAuthClient[] }>("/oauth/clients");
+  return resp.clients ?? [];
+}
+
+export async function createOAuthClient(
+  scopes: string[],
+  expiration?: string,
+): Promise<OAuthCreateResponse> {
+  return request<OAuthCreateResponse>("/oauth/clients", {
+    method: "POST",
+    body: JSON.stringify({ scopes, expiration }),
+  });
+}
+
+export async function deleteOAuthClient(id: number): Promise<void> {
+  await request(`/oauth/clients/${id}`, { method: "DELETE" });
 }

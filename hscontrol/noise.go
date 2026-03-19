@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,7 +47,16 @@ const (
 	// of length. Then that many bytes of JSON-encoded tailcfg.EarlyNoise.
 	// The early payload is optional. Some servers may not send it... But we do!
 	earlyPayloadMagic = "\xff\xff\xffTS"
+
+	unsupportedClientLogInterval = time.Minute
 )
+
+var unsupportedClientLogState = struct {
+	mu   sync.Mutex
+	last map[tailcfg.CapabilityVersion]time.Time
+}{
+	last: make(map[tailcfg.CapabilityVersion]time.Time),
+}
 
 type noiseServer struct {
 	headscale *Headscale
@@ -96,6 +106,13 @@ func (h *Headscale) NoiseUpgradeHandler(
 		ns.earlyNoise,
 	)
 	if err != nil {
+		if errors.Is(err, ErrUnsupportedClientVersion) {
+			version := tailcfg.CapabilityVersion(ns.protocolVersion)
+			logUnsupportedClientVersion(version, req.RemoteAddr, key.MachinePublic{}, key.NodePublic{})
+			http.Error(writer, unsupportedClientError(version).Error(), http.StatusBadRequest)
+			return
+		}
+
 		httpError(writer, fmt.Errorf("upgrading noise connection: %w", err))
 		return
 	}
@@ -178,7 +195,49 @@ func unsupportedClientError(version tailcfg.CapabilityVersion) error {
 	return fmt.Errorf("%w: %s (%d)", ErrUnsupportedClientVersion, capver.TailscaleVersion(version), version)
 }
 
+func logUnsupportedClientVersion(
+	version tailcfg.CapabilityVersion,
+	remoteAddr string,
+	mkey key.MachinePublic,
+	nkey key.NodePublic,
+) {
+	now := time.Now()
+
+	unsupportedClientLogState.mu.Lock()
+	lastLog, ok := unsupportedClientLogState.last[version]
+	if ok && now.Sub(lastLog) < unsupportedClientLogInterval {
+		unsupportedClientLogState.mu.Unlock()
+		return
+	}
+	unsupportedClientLogState.last[version] = now
+	unsupportedClientLogState.mu.Unlock()
+
+	logEvent := log.Warn().
+		Caller().
+		Int("minimum_cap_ver", int(capver.MinSupportedCapabilityVersion)).
+		Int("client_cap_ver", int(version)).
+		Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
+		Str("client_version", capver.TailscaleVersion(version)).
+		Dur("suppress_for", unsupportedClientLogInterval)
+
+	if remoteAddr != "" {
+		logEvent = logEvent.Str("remote_addr", remoteAddr)
+	}
+
+	if mkey != (key.MachinePublic{}) {
+		logEvent = logEvent.Str("machine.key", mkey.ShortString())
+	}
+
+	if nkey != (key.NodePublic{}) {
+		logEvent = logEvent.Str("node.key", nkey.ShortString())
+	}
+
+	logEvent.Msg("unsupported client rejected")
+}
+
 func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
+	ns.protocolVersion = protocolVersion
+
 	if !isSupportedVersion(tailcfg.CapabilityVersion(protocolVersion)) {
 		return unsupportedClientError(tailcfg.CapabilityVersion(protocolVersion))
 	}
@@ -227,15 +286,7 @@ func rejectUnsupported(
 ) bool {
 	// Reject unsupported versions
 	if !isSupportedVersion(version) {
-		log.Error().
-			Caller().
-			Int("minimum_cap_ver", int(capver.MinSupportedCapabilityVersion)).
-			Int("client_cap_ver", int(version)).
-			Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
-			Str("client_version", capver.TailscaleVersion(version)).
-			Str("node.key", nkey.ShortString()).
-			Str("machine.key", mkey.ShortString()).
-			Msg("unsupported client connected")
+		logUnsupportedClientVersion(version, "", mkey, nkey)
 		http.Error(writer, unsupportedClientError(version).Error(), http.StatusBadRequest)
 
 		return true

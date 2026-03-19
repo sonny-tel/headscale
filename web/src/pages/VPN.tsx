@@ -6,9 +6,11 @@ import {
   syncProviderRelays,
   listProviderRelays,
   listProviderAllocations,
+  listNodes,
   type ProviderAccount,
   type ProviderRelay,
   type KeyAllocation,
+  type Node,
 } from "../api";
 import ConfirmModal from "../ConfirmModal";
 
@@ -16,6 +18,7 @@ export function VPNPage() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const [relays, setRelays] = useState<ProviderRelay[]>([]);
   const [allocations, setAllocations] = useState<KeyAllocation[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -36,12 +39,14 @@ export function VPNPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [accts, allocs] = await Promise.all([
+      const [accts, allocs, nodeList] = await Promise.all([
         listProviderAccounts(),
         listProviderAllocations(),
+        listNodes(),
       ]);
       setAccounts(accts);
       setAllocations(allocs);
+      setNodes(nodeList);
       // Only fetch relays if there are accounts
       if (accts.length > 0) {
         const r = await listProviderRelays();
@@ -408,7 +413,7 @@ export function VPNPage() {
           <table>
             <thead>
               <tr>
-                <th>Node ID</th>
+                <th>Node</th>
                 <th>Account</th>
                 <th>Key</th>
                 <th>Allocated</th>
@@ -417,9 +422,10 @@ export function VPNPage() {
             <tbody>
               {allocations.map((alloc) => {
                 const acct = accounts.find((a) => a.id === String(alloc.account_id));
+                const node = nodes.find((n) => n.id === String(alloc.node_id));
                 return (
                   <tr key={alloc.id}>
-                    <td>{alloc.node_id}</td>
+                    <td>{node ? node.given_name || node.name : `#${alloc.node_id}`}</td>
                     <td>
                       {acct ? (
                         <span>
